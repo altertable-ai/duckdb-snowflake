@@ -1,9 +1,21 @@
 #include "snowflake_debug.hpp"
 #include "snowflake_arrow_utils.hpp"
 #include "snowflake_query_builder.hpp"
+#include "snowflake_client_manager.hpp"
 #include "duckdb/common/exception.hpp"
 
 namespace duckdb {
+
+// Helper function to detect authentication-related errors
+// Only checks for specific Snowflake error codes to avoid false positives
+static bool IsAuthenticationError(const std::string &error_msg) {
+	// Error 390114: Authentication token has expired
+	// Error 390144: JWT token is invalid
+	// Note: We intentionally exclude 250001 (connection failed) as it's too general
+	// and can occur for network issues, not just auth failures
+	return error_msg.find("390114") != std::string::npos || // Token expired
+	       error_msg.find("390144") != std::string::npos;   // Invalid JWT
+}
 
 // Wrapper to handle ADBC ArrowArrayStream
 // This class takes ownership of an ADBC stream and makes it compatible with
@@ -124,6 +136,20 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 				error.release(&error);
 			}
 		}
+
+		// Check if this is an authentication error (token expired, etc.)
+		if (IsAuthenticationError(error_msg)) {
+			// Invalidate the cached connection so next attempt gets a fresh one
+			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
+			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			DPRINT("Authentication error detected, connection invalidated for retry\n");
+
+			// Provide a helpful error message
+			throw IOException(error_msg +
+			                  "\n\nThe authentication token may have expired. "
+			                  "Please retry your query - a fresh connection will be established automatically.");
+		}
+
 		throw IOException(error_msg);
 	}
 
