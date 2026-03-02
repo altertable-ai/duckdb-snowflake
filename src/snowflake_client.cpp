@@ -185,6 +185,24 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.account", config.account.c_str(), &error);
 	CheckError(status, "Failed to set account", &error);
 
+	// Set custom host/port/protocol for Localstack or private endpoints
+	if (!config.host.empty()) {
+		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.uri.host", config.host.c_str(), &error);
+		CheckError(status, "Failed to set host", &error);
+		LOG_INFO("Set custom host: %s\n", config.host.c_str());
+	}
+	if (config.port != 443) {
+		std::string port_str = std::to_string(config.port);
+		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.uri.port", port_str.c_str(), &error);
+		CheckError(status, "Failed to set port", &error);
+		LOG_INFO("Set custom port: %d\n", config.port);
+	}
+	if (!config.protocol.empty()) {
+		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.uri.protocol", config.protocol.c_str(), &error);
+		CheckError(status, "Failed to set protocol", &error);
+		LOG_INFO("Set custom protocol: %s\n", config.protocol.c_str());
+	}
+
 	// Set authentication based on type
 	switch (config.auth_type) {
 	case SnowflakeAuthType::PASSWORD:

@@ -10,6 +10,9 @@ enum class SnowflakeAuthType { PASSWORD, OAUTH, KEY_PAIR, EXT_BROWSER, OKTA, MFA
 
 struct SnowflakeConfig {
 	std::string account;
+	std::string host;     // Custom host for Localstack/private endpoints
+	int32_t port = 443;   // Custom port (default: 443)
+	std::string protocol; // Custom protocol: "http" or "https" (default: https)
 	std::string warehouse;
 	std::string database;
 	std::string role;
@@ -50,6 +53,9 @@ public:
 		std::size_t seed = 0;
 
 		HashCombine(seed, config.account);
+		HashCombine(seed, config.host);
+		HashCombine(seed, config.port);
+		HashCombine(seed, config.protocol);
 		HashCombine(seed, config.warehouse);
 		HashCombine(seed, config.database);
 		HashCombine(seed, config.role);

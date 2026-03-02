@@ -30,6 +30,30 @@ string SnowflakeSecret::GetAccount() const {
 	return "";
 }
 
+string SnowflakeSecret::GetHost() const {
+	Value value;
+	if (TryGetValue("host", value)) {
+		return value.GetValue<string>();
+	}
+	return "";
+}
+
+int32_t SnowflakeSecret::GetPort() const {
+	Value value;
+	if (TryGetValue("port", value)) {
+		return value.GetValue<int32_t>();
+	}
+	return 443; // Default HTTPS port
+}
+
+string SnowflakeSecret::GetProtocol() const {
+	Value value;
+	if (TryGetValue("protocol", value)) {
+		return value.GetValue<string>();
+	}
+	return ""; // Empty means use default (https)
+}
+
 string SnowflakeSecret::GetWarehouse() const {
 	Value value;
 	if (TryGetValue("warehouse", value)) {
@@ -161,9 +185,9 @@ unique_ptr<BaseSecret> CreateSnowflakeSecret(ClientContext &context, CreateSecre
 	vector<string> required_fields = {"account", "database"};
 
 	// All possible optional fields
-	vector<string> optional_fields = {"user",        "password", "warehouse", "schema",
-	                                  "auth_type",   "token",    "okta_url",  "private_key_passphrase",
-	                                  "private_key", "role"};
+	vector<string> optional_fields = {
+	    "user",        "password", "warehouse", "schema", "auth_type", "token", "okta_url", "private_key_passphrase",
+	    "private_key", "role",     "host",      "port",   "protocol"};
 
 	// Process required fields
 	for (const auto &field : required_fields) {
@@ -217,6 +241,11 @@ void RegisterSnowflakeSecretType(DatabaseInstance &instance) {
 	create_function.named_parameters["database"] = LogicalType::VARCHAR;
 	create_function.named_parameters["schema"] = LogicalType::VARCHAR;
 	create_function.named_parameters["role"] = LogicalType::VARCHAR;
+
+	// Network configuration parameters (for Localstack/private endpoints)
+	create_function.named_parameters["host"] = LogicalType::VARCHAR;
+	create_function.named_parameters["port"] = LogicalType::INTEGER;
+	create_function.named_parameters["protocol"] = LogicalType::VARCHAR;
 
 	// OAuth/Okta/Key Pair authentication parameters
 	create_function.named_parameters["auth_type"] = LogicalType::VARCHAR;
