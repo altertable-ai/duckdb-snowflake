@@ -6,14 +6,16 @@
 
 namespace duckdb {
 
-// Helper function to detect authentication-related errors
+// Helper function to detect authentication/session-related errors
 // Only checks for specific Snowflake error codes to avoid false positives
 static bool IsAuthenticationError(const std::string &error_msg) {
+	// Error 390111: Session no longer exists
 	// Error 390114: Authentication token has expired
 	// Error 390144: JWT token is invalid
 	// Note: We intentionally exclude 250001 (connection failed) as it's too general
 	// and can occur for network issues, not just auth failures
-	return error_msg.find("390114") != std::string::npos || // Token expired
+	return error_msg.find("390111") != std::string::npos || // Session no longer exists
+	       error_msg.find("390114") != std::string::npos || // Token expired
 	       error_msg.find("390144") != std::string::npos;   // Invalid JWT
 }
 
