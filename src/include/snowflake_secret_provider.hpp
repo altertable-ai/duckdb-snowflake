@@ -23,6 +23,9 @@ public:
 	string GetUser() const;
 	string GetPassword() const;
 	string GetAccount() const;
+	string GetHost() const;
+	int32_t GetPort() const;
+	string GetProtocol() const;
 	string GetWarehouse() const;
 	string GetDatabase() const;
 	string GetSchema() const;

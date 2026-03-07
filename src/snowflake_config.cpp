@@ -22,6 +22,12 @@ SnowflakeConfig SnowflakeConfig::ParseConnectionString(const std::string &connec
 
 		if (key == "account") {
 			config.account = value;
+		} else if (key == "host") {
+			config.host = value;
+		} else if (key == "port") {
+			config.port = std::stoi(value);
+		} else if (key == "protocol") {
+			config.protocol = value;
 		} else if (key == "username" || key == "user") {
 			config.username = value;
 		} else if (key == "password") {
@@ -78,6 +84,15 @@ SnowflakeConfig SnowflakeConfig::ParseConnectionString(const std::string &connec
 std::string SnowflakeConfig::ToString() const {
 	std::ostringstream oss;
 	oss << "account=" << account << ";";
+	if (!host.empty()) {
+		oss << "host=" << host << ";";
+	}
+	if (port != 443) {
+		oss << "port=" << port << ";";
+	}
+	if (!protocol.empty()) {
+		oss << "protocol=" << protocol << ";";
+	}
 	oss << "user=" << username << ";";
 	oss << "password=" << password << ";";
 	oss << "database=" << database << ";";
@@ -113,9 +128,10 @@ std::string SnowflakeConfig::ToString() const {
 }
 
 bool SnowflakeConfig::operator==(const SnowflakeConfig &other) const {
-	return (account == other.account && username == other.username && password == other.password &&
-	        warehouse == other.warehouse && database == other.database && role == other.role &&
-	        auth_type == other.auth_type && oauth_token == other.oauth_token && private_key == other.private_key &&
+	return (account == other.account && host == other.host && port == other.port && protocol == other.protocol &&
+	        username == other.username && password == other.password && warehouse == other.warehouse &&
+	        database == other.database && role == other.role && auth_type == other.auth_type &&
+	        oauth_token == other.oauth_token && private_key == other.private_key &&
 	        private_key_passphrase == other.private_key_passphrase && okta_url == other.okta_url &&
 	        query_timeout == other.query_timeout && keep_alive == other.keep_alive);
 }

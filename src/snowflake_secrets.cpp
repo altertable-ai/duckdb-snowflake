@@ -70,6 +70,9 @@ snowflake::SnowflakeConfig SnowflakeSecretsHelper::GetCredentials(ClientContext 
 		config.username = snowflake_secret->GetUser();
 		config.password = snowflake_secret->GetPassword();
 		config.account = snowflake_secret->GetAccount();
+		config.host = snowflake_secret->GetHost();
+		config.port = snowflake_secret->GetPort();
+		config.protocol = snowflake_secret->GetProtocol();
 		config.warehouse = snowflake_secret->GetWarehouse();
 		config.database = snowflake_secret->GetDatabase();
 		config.role = snowflake_secret->GetRole();
