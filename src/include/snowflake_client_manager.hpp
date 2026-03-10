@@ -18,6 +18,12 @@ public:
 
 	void ReleaseConnection(const SnowflakeConfig &config);
 
+	//! Invalidate a connection (e.g., on auth error) and force reconnection on next GetConnection
+	void InvalidateConnection(const SnowflakeConfig &config);
+
+	//! Get a fresh connection, bypassing the cache (for retry after auth failure)
+	shared_ptr<SnowflakeClient> GetFreshConnection(const SnowflakeConfig &config);
+
 private:
 	SnowflakeClientManager() = default;
 	std::unordered_map<SnowflakeConfig, shared_ptr<SnowflakeClient>, SnowflakeConfigHash> connections;
