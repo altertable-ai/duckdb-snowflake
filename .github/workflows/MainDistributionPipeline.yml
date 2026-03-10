@@ -37,6 +37,8 @@ jobs:
     name: Build complete extension package
     needs: [duckdb-stable-build, code-quality-check]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false  # Continue building other platforms even if one fails
       matrix:
