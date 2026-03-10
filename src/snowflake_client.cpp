@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <sstream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -204,9 +205,10 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	}
 
 	// Set authentication based on type
+	// Reference: https://arrow.apache.org/adbc/current/driver/snowflake.html
 	switch (config.auth_type) {
 	case SnowflakeAuthType::PASSWORD:
-		// Default auth type, set username and password
+		// Default auth type is auth_snowflake (password-based)
 		if (!config.username.empty()) {
 			status = AdbcDatabaseSetOption(&database, "username", config.username.c_str(), &error);
 			CheckError(status, "Failed to set username", &error);
@@ -241,49 +243,57 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 			CheckError(status, "Failed to set username for OAuth", &error);
 		}
 		break;
-	case SnowflakeAuthType::KEY_PAIR:
-		// Key pair authentication with JWT
+	case SnowflakeAuthType::KEY_PAIR: {
+		// Set auth type to auth_jwt for keypair authentication
 		if (!config.username.empty()) {
 			status = AdbcDatabaseSetOption(&database, "username", config.username.c_str(), &error);
 			CheckError(status, "Failed to set username", &error);
 		}
 		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.auth_type", "auth_jwt", &error);
-		CheckError(status, "Failed to set key-pair auth type", &error);
-		if (!config.private_key.empty()) {
-			// Check if this is a file path by testing if the file exists
-			bool is_file_path = FileExists(config.private_key);
+		CheckError(status, "Failed to set auth type to jwt", &error);
 
-			if (is_file_path) {
-				// Read the key file content
-				std::ifstream key_file(config.private_key);
-				if (!key_file.is_open()) {
-					throw IOException("Failed to open private key file: " + config.private_key);
-				}
-				std::string key_content((std::istreambuf_iterator<char>(key_file)), std::istreambuf_iterator<char>());
-				key_file.close();
-
-				// Use pkcs8_value for file content (supports both encrypted and unencrypted keys)
-				status =
-				    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_value",
-				                          key_content.c_str(), &error);
-				CheckError(status, "Failed to set private key content", &error);
-			} else {
-				// Assume it's the key content directly (PEM format)
-				status =
-				    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_value",
-				                          config.private_key.c_str(), &error);
-				CheckError(status, "Failed to set private key content", &error);
+		std::string private_key_content;
+		if (!config.private_key_file.empty()) {
+			// Read private key from file
+			std::ifstream key_file(config.private_key_file);
+			if (!key_file.is_open()) {
+				throw IOException("Failed to open private key file: " + config.private_key_file);
 			}
+			std::stringstream buffer;
+			buffer << key_file.rdbuf();
+			private_key_content = buffer.str();
+		} else if (!config.private_key.empty()) {
+			private_key_content = config.private_key;
+		}
 
-			// Set passphrase if provided (for encrypted keys)
-			if (!config.private_key_passphrase.empty()) {
+		if (!private_key_content.empty()) {
+			// Use jwt_private_key_pkcs8_value for PKCS8 keys (supports both encrypted and unencrypted)
+			status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_value",
+			                               private_key_content.c_str(), &error);
+			CheckError(status, "Failed to set private key", &error);
+		}
+
+		// Set password for encrypted private keys
+		std::string password_content;
+		if (!config.private_key_password.empty()) {
+			// Check if it's a file path or direct password
+			std::ifstream pass_file(config.private_key_password);
+			if (pass_file.is_open()) {
+				// It's a file, read the content
+				std::getline(pass_file, password_content);
+			} else {
+				// It's a direct password
+				password_content = config.private_key_password;
+			}
+			if (!password_content.empty()) {
 				status =
 				    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password",
-				                          config.private_key_passphrase.c_str(), &error);
-				CheckError(status, "Failed to set private key passphrase", &error);
+				                          password_content.c_str(), &error);
+				CheckError(status, "Failed to set private key password", &error);
 			}
 		}
 		break;
+	}
 	case SnowflakeAuthType::EXT_BROWSER:
 		// External browser SSO - username may be optional depending on SSO setup
 		if (!config.username.empty()) {
@@ -586,8 +596,7 @@ vector<vector<string>> SnowflakeClient::ExecuteAndGetStrings(ClientContext &cont
 		for (idx_t col_idx = 0; col_idx < static_cast<idx_t>(arrow_array.n_children); col_idx++) {
 			ArrowArray *column = arrow_array.children[col_idx];
 			if (column && column->buffers && static_cast<size_t>(column->n_buffers) >= 3) {
-				// For string columns: buffer[0] is validity, buffer[1] is offsets,
-				// buffer[2] is data
+				// For string columns: buffer[0] is validity, buffer[1] is offsets, buffer[2] is data
 				const int32_t *offsets = static_cast<const int32_t *>(column->buffers[1]);
 				const char *data = static_cast<const char *>(column->buffers[2]);
 				const uint8_t *validity = nullptr;
@@ -682,8 +691,7 @@ unique_ptr<DataChunk> SnowflakeClient::ExecuteAndGetChunk(ClientContext &context
 	ArrowTableSchema arrow_table;
 	vector<string> actual_names;
 	vector<LogicalType> actual_types;
-	ArrowTableFunction::PopulateArrowTableSchema(DBConfig::GetConfig(context), arrow_table,
-	                                             schema_wrapper.arrow_schema);
+	ArrowTableFunction::PopulateArrowTableSchema(context, arrow_table, schema_wrapper.arrow_schema);
 	actual_names = arrow_table.GetNames();
 	actual_types = arrow_table.GetTypes();
 

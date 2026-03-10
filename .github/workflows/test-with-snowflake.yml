@@ -21,7 +21,7 @@ jobs:
       - name: Setup DuckDB version
         run: |
           cd duckdb
-          git checkout v1.4.3 || git checkout main
+          git checkout v1.5-variegata || git checkout main
       
       - name: Install dependencies
         run: |
@@ -50,8 +50,13 @@ jobs:
           fi
           
           echo "Running Snowflake extension tests..."
-          # Run only Snowflake extension tests, not all DuckDB tests
-          ./build/release/test/unittest test/sql/snowflake_*.test test/sql/pushdown/*.test
+          # Patterns ending in ".test" are intercepted as file paths and never reach
+          # Catch2's filter engine - they will silently match nothing.
+          # Use name wildcards WITHOUT the .test suffix, or group tags.
+          echo "Running test/sql/snowflake_*.test files..."
+          ./build/release/test/unittest "*snowflake_*"
+          echo "Running test/sql/pushdown/*.test files..."
+          ./build/release/test/unittest "[pushdown]"
       
       - name: Upload test results and profiling data
         if: always()
