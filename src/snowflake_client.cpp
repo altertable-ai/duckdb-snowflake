@@ -275,9 +275,8 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 
 		// Set password for encrypted private keys
 		if (!config.private_key_password.empty()) {
-			status =
-			    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password",
-			                          config.private_key_password.c_str(), &error);
+			status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password",
+			                               config.private_key_password.c_str(), &error);
 			CheckError(status, "Failed to set private key password", &error);
 		}
 		break;
