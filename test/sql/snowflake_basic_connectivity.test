@@ -151,20 +151,16 @@ CREATE PERSISTENT SECRET missing_account (
 ----
 Snowflake secret requires field 'account'
 
-# Test 15: Create Secret with Missing User
-# Note: USER is optional in some auth methods (e.g., external browser)
-# So this may succeed - just verify it creates
-statement ok
+# Test 15: Create Secret with Missing User (should fail - user is required)
+statement error
 CREATE PERSISTENT SECRET missing_user (
     TYPE snowflake,
     ACCOUNT 'test_account',
     PASSWORD 'test_pass',
     DATABASE 'test_db'
 );
-
-# Clean up test secret
-statement ok
-DROP SECRET missing_user;
+----
+Snowflake secret requires field 'user'
 
 # Test 16: Create Secret with Missing Auth Credential (should fail - no password or private_key)
 statement error

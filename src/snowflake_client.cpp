@@ -274,23 +274,11 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		}
 
 		// Set password for encrypted private keys
-		std::string password_content;
 		if (!config.private_key_password.empty()) {
-			// Check if it's a file path or direct password
-			std::ifstream pass_file(config.private_key_password);
-			if (pass_file.is_open()) {
-				// It's a file, read the content
-				std::getline(pass_file, password_content);
-			} else {
-				// It's a direct password
-				password_content = config.private_key_password;
-			}
-			if (!password_content.empty()) {
-				status =
-				    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password",
-				                          password_content.c_str(), &error);
-				CheckError(status, "Failed to set private key password", &error);
-			}
+			status =
+			    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password",
+			                          config.private_key_password.c_str(), &error);
+			CheckError(status, "Failed to set private key password", &error);
 		}
 		break;
 	}

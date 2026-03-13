@@ -141,16 +141,7 @@ string SnowflakeSecret::GetOktaUrl() const {
 
 //! Helper to try getting value with case-insensitive key lookup
 static bool TryGetValueCaseInsensitive(const SnowflakeSecret &secret, const string &key, Value &value) {
-	// Try lowercase
-	if (secret.TryGetValue(key, value)) {
-		return true;
-	}
-	// Try uppercase
-	string upper_key = StringUtil::Upper(key);
-	if (secret.TryGetValue(upper_key, value)) {
-		return true;
-	}
-	return false;
+	return secret.TryGetValue(key, value);
 }
 
 //! Validate that all required fields are present
@@ -232,19 +223,7 @@ unique_ptr<BaseSecret> SnowflakeSecret::Deserialize(Deserializer &deserializer, 
 //! Helper to find option with case-insensitive key lookup
 static case_insensitive_map_t<Value>::const_iterator
 FindOptionCaseInsensitive(const case_insensitive_map_t<Value> &options, const string &key) {
-	// DuckDB's case_insensitive_map_t should handle this, but let's be explicit
-	auto it = options.find(key);
-	if (it != options.end()) {
-		return it;
-	}
-	// Try uppercase
-	it = options.find(StringUtil::Upper(key));
-	if (it != options.end()) {
-		return it;
-	}
-	// Try lowercase
-	it = options.find(StringUtil::Lower(key));
-	return it;
+	return options.find(key);
 }
 
 //! Create function for Snowflake secrets
@@ -258,6 +237,13 @@ unique_ptr<BaseSecret> CreateSnowflakeSecret(ClientContext &context, CreateSecre
 	// Conditionally required (password OR private_key/private_key_file based on auth_type)
 	vector<string> auth_fields = {"password",  "private_key", "private_key_file", "private_key_password",
 	                              "auth_type", "token",       "okta_url"};
+
+	// Accept private_key_passphrase as a backward-compatible alias for private_key_password
+	auto passphrase_it = FindOptionCaseInsensitive(input.options, "private_key_passphrase");
+	if (passphrase_it != input.options.end() &&
+	    FindOptionCaseInsensitive(input.options, "private_key_password") == input.options.end()) {
+		secret->secret_map["private_key_password"] = passphrase_it->second;
+	}
 	// Optional fields
 	vector<string> optional_fields = {"warehouse", "schema", "role", "host", "port", "protocol"};
 
@@ -334,6 +320,7 @@ void RegisterSnowflakeSecretType(DatabaseInstance &instance) {
 	create_function.named_parameters["private_key"] = LogicalType::VARCHAR;
 	create_function.named_parameters["private_key_file"] = LogicalType::VARCHAR;
 	create_function.named_parameters["private_key_password"] = LogicalType::VARCHAR;
+	create_function.named_parameters["private_key_passphrase"] = LogicalType::VARCHAR; // backward-compat alias
 
 	// Register the create function
 	secret_manager.RegisterSecretFunction(create_function, OnCreateConflict::ERROR_ON_CONFLICT);

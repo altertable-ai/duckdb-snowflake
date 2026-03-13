@@ -12,6 +12,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
+env:
+  ADBC_VERSION: "1.8.0"
+  ADBC_RELEASE_TAG: "apache-arrow-adbc-20"
+
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
@@ -44,17 +48,17 @@ jobs:
       matrix:
         platform:
           - name: linux_amd64
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl
+            wheel_suffix: py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl
           - name: linux_arm64
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+            wheel_suffix: py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
           - name: osx_amd64
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-macosx_10_15_x86_64.whl
+            wheel_suffix: py3-none-macosx_10_15_x86_64.whl
           - name: osx_arm64
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-macosx_11_0_arm64.whl
+            wheel_suffix: py3-none-macosx_11_0_arm64.whl
           - name: windows_amd64
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-win_amd64.whl
+            wheel_suffix: py3-none-win_amd64.whl
           - name: windows_amd64_mingw
-            wheel: adbc_driver_snowflake-1.8.0-py3-none-win_amd64.whl
+            wheel_suffix: py3-none-win_amd64.whl
     
     steps:
       - name: Checkout repository
@@ -70,14 +74,15 @@ jobs:
         run: |
           mkdir -p adbc_driver
           cd adbc_driver
-          WHEEL_URL="https://github.com/apache/arrow-adbc/releases/download/apache-arrow-adbc-20/${{ matrix.platform.wheel }}"
+          WHEEL="adbc_driver_snowflake-${{ env.ADBC_VERSION }}-${{ matrix.platform.wheel_suffix }}"
+          WHEEL_URL="https://github.com/apache/arrow-adbc/releases/download/${{ env.ADBC_RELEASE_TAG }}/$WHEEL"
           echo "Downloading ADBC driver from: $WHEEL_URL"
           if ! wget -q "$WHEEL_URL"; then
-            echo "ERROR: Failed to download ADBC driver wheel: ${{ matrix.platform.wheel }}"
+            echo "ERROR: Failed to download ADBC driver wheel: $WHEEL"
             exit 1
           fi
-          if ! unzip -q ${{ matrix.platform.wheel }}; then
-            echo "ERROR: Failed to unzip ADBC driver wheel: ${{ matrix.platform.wheel }}"
+          if ! unzip -q "$WHEEL"; then
+            echo "ERROR: Failed to unzip ADBC driver wheel: $WHEEL"
             exit 1
           fi
           echo "Contents of adbc_driver_snowflake directory:"
