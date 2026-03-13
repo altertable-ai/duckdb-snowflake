@@ -80,7 +80,7 @@ string SnowflakeSecret::GetSchema() const {
 
 string SnowflakeSecret::GetRole() const {
 	Value value;
-	if (TryGetValue("role", value)) {
+	if (TryGetValue("role", value) || TryGetValue("ROLE", value)) {
 		return value.GetValue<string>();
 	}
 	return "";
@@ -88,7 +88,35 @@ string SnowflakeSecret::GetRole() const {
 
 string SnowflakeSecret::GetAuthType() const {
 	Value value;
-	if (TryGetValue("auth_type", value)) {
+	// Try both lowercase and uppercase variants
+	if (TryGetValue("auth_type", value) || TryGetValue("AUTH_TYPE", value)) {
+		return value.GetValue<string>();
+	}
+	return "password"; // default to password auth
+}
+
+string SnowflakeSecret::GetPrivateKey() const {
+	Value value;
+	// Try both lowercase and uppercase variants
+	if (TryGetValue("private_key", value) || TryGetValue("PRIVATE_KEY", value)) {
+		return value.GetValue<string>();
+	}
+	return "";
+}
+
+string SnowflakeSecret::GetPrivateKeyFile() const {
+	Value value;
+	// Try both lowercase and uppercase variants
+	if (TryGetValue("private_key_file", value) || TryGetValue("PRIVATE_KEY_FILE", value)) {
+		return value.GetValue<string>();
+	}
+	return "";
+}
+
+string SnowflakeSecret::GetPrivateKeyPassword() const {
+	Value value;
+	// Try both lowercase and uppercase variants
+	if (TryGetValue("private_key_password", value) || TryGetValue("PRIVATE_KEY_PASSWORD", value)) {
 		return value.GetValue<string>();
 	}
 	return "";
@@ -96,7 +124,8 @@ string SnowflakeSecret::GetAuthType() const {
 
 string SnowflakeSecret::GetToken() const {
 	Value value;
-	if (TryGetValue("token", value)) {
+	// Try both lowercase and uppercase variants
+	if (TryGetValue("token", value) || TryGetValue("TOKEN", value)) {
 		return value.GetValue<string>();
 	}
 	return "";
@@ -104,36 +133,26 @@ string SnowflakeSecret::GetToken() const {
 
 string SnowflakeSecret::GetOktaUrl() const {
 	Value value;
-	if (TryGetValue("okta_url", value)) {
+	if (TryGetValue("okta_url", value) || TryGetValue("OKTA_URL", value)) {
 		return value.GetValue<string>();
 	}
 	return "";
 }
 
-string SnowflakeSecret::GetPrivateKey() const {
-	Value value;
-	if (TryGetValue("private_key", value)) {
-		return value.GetValue<string>();
-	}
-	return "";
-}
-
-string SnowflakeSecret::GetPrivateKeyPassphrase() const {
-	Value value;
-	if (TryGetValue("private_key_passphrase", value)) {
-		return value.GetValue<string>();
-	}
-	return "";
+//! Helper to try getting value with case-insensitive key lookup
+static bool TryGetValueCaseInsensitive(const SnowflakeSecret &secret, const string &key, Value &value) {
+	return secret.TryGetValue(key, value);
 }
 
 //! Validate that all required fields are present
 void SnowflakeSecret::Validate() const {
-	vector<string> required_fields = {"user", "password", "account", "database"};
+	// Always required fields
+	vector<string> always_required = {"user", "account", "database"};
 	vector<string> missing_fields;
 
-	for (const auto &field : required_fields) {
+	for (const auto &field : always_required) {
 		Value value;
-		if (!TryGetValue(field, value) || value.IsNull()) {
+		if (!TryGetValueCaseInsensitive(*this, field, value) || value.IsNull()) {
 			missing_fields.push_back(field);
 		}
 	}
@@ -141,6 +160,31 @@ void SnowflakeSecret::Validate() const {
 	if (!missing_fields.empty()) {
 		throw InvalidInputException("Snowflake secret is missing required fields: %s",
 		                            StringUtil::Join(missing_fields, ", "));
+	}
+
+	// Check auth_type and require appropriate credential
+	string auth_type = GetAuthType();
+	if (auth_type == "key_pair") {
+		string pk = GetPrivateKey();
+		string pk_file = GetPrivateKeyFile();
+		if (pk.empty() && pk_file.empty()) {
+			throw InvalidInputException(
+			    "Snowflake secret with auth_type 'key_pair' requires 'private_key' or 'private_key_file' field");
+		}
+	} else if (auth_type == "oauth") {
+		// OAuth requires a token
+		Value token_value;
+		if (!TryGetValueCaseInsensitive(*this, "token", token_value) || token_value.IsNull() ||
+		    token_value.GetValue<string>().empty()) {
+			throw InvalidInputException("Snowflake secret with auth_type 'oauth' requires 'token' field");
+		}
+	} else {
+		// password auth (default)
+		string pw = GetPassword();
+		if (pw.empty()) {
+			throw InvalidInputException("Snowflake secret requires 'password' field (or use auth_type 'key_pair' with "
+			                            "'private_key'/'private_key_file', or auth_type 'oauth' with 'token')");
+		}
 	}
 }
 
@@ -176,39 +220,63 @@ unique_ptr<BaseSecret> SnowflakeSecret::Deserialize(Deserializer &deserializer, 
 	return std::move(result);
 }
 
+//! Helper to find option with case-insensitive key lookup
+static case_insensitive_map_t<Value>::const_iterator
+FindOptionCaseInsensitive(const case_insensitive_map_t<Value> &options, const string &key) {
+	return options.find(key);
+}
+
 //! Create function for Snowflake secrets
 unique_ptr<BaseSecret> CreateSnowflakeSecret(ClientContext &context, CreateSecretInput &input) {
 	// Create the secret with the provided scope and name
 	auto secret = make_uniq<SnowflakeSecret>(input.scope, input.provider, input.name);
 
+	// Extract Snowflake-specific parameters from the input options
 	// Always required fields
-	vector<string> required_fields = {"account", "database"};
+	vector<string> always_required = {"user", "account", "database"};
+	// Conditionally required (password OR private_key/private_key_file based on auth_type)
+	vector<string> auth_fields = {"password",  "private_key", "private_key_file", "private_key_password",
+	                              "auth_type", "token",       "okta_url"};
 
-	// All possible optional fields
-	vector<string> optional_fields = {
-	    "user",        "password", "warehouse", "schema", "auth_type", "token", "okta_url", "private_key_passphrase",
-	    "private_key", "role",     "host",      "port",   "protocol"};
+	// Accept private_key_passphrase as a backward-compatible alias for private_key_password
+	auto passphrase_it = FindOptionCaseInsensitive(input.options, "private_key_passphrase");
+	if (passphrase_it != input.options.end() &&
+	    FindOptionCaseInsensitive(input.options, "private_key_password") == input.options.end()) {
+		secret->secret_map["private_key_password"] = passphrase_it->second;
+	}
+	// Optional fields
+	vector<string> optional_fields = {"warehouse", "schema", "role", "host", "port", "protocol"};
 
-	// Process required fields
-	for (const auto &field : required_fields) {
-		auto it = input.options.find(field);
+	// Process always required fields
+	for (const auto &field : always_required) {
+		auto it = FindOptionCaseInsensitive(input.options, field);
 		if (it == input.options.end()) {
 			throw InvalidInputException("Snowflake secret requires field '%s'", field);
 		}
-
-		// Store the value in the secret map
+		// Store with lowercase key for consistent retrieval
 		secret->secret_map[field] = it->second;
 	}
 
-	// Process optional fields
-	for (const auto &field : optional_fields) {
-		auto it = input.options.find(field);
+	// Process auth-related fields (all optional at this stage, validated later)
+	for (const auto &field : auth_fields) {
+		auto it = FindOptionCaseInsensitive(input.options, field);
 		if (it != input.options.end()) {
+			// Store with lowercase key for consistent retrieval
 			secret->secret_map[field] = it->second;
 		}
 	}
 
-	// Note: No validation call - let ADBC driver validate based on auth_type
+	// Process optional fields
+	for (const auto &field : optional_fields) {
+		auto it = FindOptionCaseInsensitive(input.options, field);
+		if (it != input.options.end()) {
+			// Store with lowercase key for consistent retrieval
+			secret->secret_map[field] = it->second;
+		}
+	}
+
+	// Validate the secret (checks auth_type and requires password OR private_key)
+	secret->Validate();
 
 	return std::move(secret);
 }
@@ -237,22 +305,22 @@ void RegisterSnowflakeSecretType(DatabaseInstance &instance) {
 	create_function.named_parameters["user"] = LogicalType::VARCHAR;
 	create_function.named_parameters["password"] = LogicalType::VARCHAR;
 	create_function.named_parameters["account"] = LogicalType::VARCHAR;
+	create_function.named_parameters["host"] = LogicalType::VARCHAR;
+	create_function.named_parameters["port"] = LogicalType::INTEGER;
+	create_function.named_parameters["protocol"] = LogicalType::VARCHAR;
 	create_function.named_parameters["warehouse"] = LogicalType::VARCHAR;
 	create_function.named_parameters["database"] = LogicalType::VARCHAR;
 	create_function.named_parameters["schema"] = LogicalType::VARCHAR;
 	create_function.named_parameters["role"] = LogicalType::VARCHAR;
 
-	// Network configuration parameters (for Localstack/private endpoints)
-	create_function.named_parameters["host"] = LogicalType::VARCHAR;
-	create_function.named_parameters["port"] = LogicalType::INTEGER;
-	create_function.named_parameters["protocol"] = LogicalType::VARCHAR;
-
-	// OAuth/Okta/Key Pair authentication parameters
+	// Authentication parameters
 	create_function.named_parameters["auth_type"] = LogicalType::VARCHAR;
 	create_function.named_parameters["token"] = LogicalType::VARCHAR;
 	create_function.named_parameters["okta_url"] = LogicalType::VARCHAR;
 	create_function.named_parameters["private_key"] = LogicalType::VARCHAR;
-	create_function.named_parameters["private_key_passphrase"] = LogicalType::VARCHAR;
+	create_function.named_parameters["private_key_file"] = LogicalType::VARCHAR;
+	create_function.named_parameters["private_key_password"] = LogicalType::VARCHAR;
+	create_function.named_parameters["private_key_passphrase"] = LogicalType::VARCHAR; // backward-compat alias
 
 	// Register the create function
 	secret_manager.RegisterSecretFunction(create_function, OnCreateConflict::ERROR_ON_CONFLICT);

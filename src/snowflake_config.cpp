@@ -60,8 +60,10 @@ SnowflakeConfig SnowflakeConfig::ParseConnectionString(const std::string &connec
 			config.oauth_token = value;
 		} else if (key == "private_key") {
 			config.private_key = value;
-		} else if (key == "private_key_passphrase") {
-			config.private_key_passphrase = value;
+		} else if (key == "private_key_file") {
+			config.private_key_file = value;
+		} else if (key == "private_key_password") {
+			config.private_key_password = value;
 		} else if (key == "okta_url") {
 			config.okta_url = value;
 		} else if (key == "query_timeout") {
@@ -108,8 +110,11 @@ std::string SnowflakeConfig::ToString() const {
 	} else if (auth_type == SnowflakeAuthType::KEY_PAIR) {
 		oss << "auth_type=key_pair;";
 		oss << "private_key=" << private_key << ";";
-		if (!private_key_passphrase.empty()) {
-			oss << "private_key_passphrase=" << private_key_passphrase << ";";
+		if (!private_key_file.empty()) {
+			oss << "private_key_file=" << private_key_file << ";";
+		}
+		if (!private_key_password.empty()) {
+			oss << "private_key_password=" << private_key_password << ";";
 		}
 	} else if (auth_type == SnowflakeAuthType::EXT_BROWSER) {
 		oss << "auth_type=ext_browser;";
@@ -132,8 +137,8 @@ bool SnowflakeConfig::operator==(const SnowflakeConfig &other) const {
 	        username == other.username && password == other.password && warehouse == other.warehouse &&
 	        database == other.database && role == other.role && auth_type == other.auth_type &&
 	        oauth_token == other.oauth_token && private_key == other.private_key &&
-	        private_key_passphrase == other.private_key_passphrase && okta_url == other.okta_url &&
-	        query_timeout == other.query_timeout && keep_alive == other.keep_alive);
+	        private_key_file == other.private_key_file && private_key_password == other.private_key_password &&
+	        okta_url == other.okta_url && query_timeout == other.query_timeout && keep_alive == other.keep_alive);
 }
 
 } // namespace snowflake

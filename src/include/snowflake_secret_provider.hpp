@@ -13,10 +13,10 @@ public:
 	    : KeyValueSecret(prefix_paths, "snowflake", provider, name) {
 		// Mark sensitive fields for redaction
 		redact_keys.insert("password");
-		redact_keys.insert("secret");
-		redact_keys.insert("token");
 		redact_keys.insert("private_key");
-		redact_keys.insert("private_key_passphrase");
+		redact_keys.insert("private_key_password");
+		redact_keys.insert("token");
+		redact_keys.insert("secret");
 	}
 
 	//! Get Snowflake-specific fields
@@ -33,10 +33,11 @@ public:
 
 	//! Get authentication-specific fields
 	string GetAuthType() const;
+	string GetPrivateKey() const;
+	string GetPrivateKeyFile() const;
+	string GetPrivateKeyPassword() const;
 	string GetToken() const;
 	string GetOktaUrl() const;
-	string GetPrivateKey() const;
-	string GetPrivateKeyPassphrase() const;
 
 	//! Validate that all required fields are present
 	void Validate() const;
