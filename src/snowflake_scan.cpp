@@ -86,8 +86,12 @@ TableFunction GetSnowflakeScanFunction() {
 	                              ArrowTableFunction::ArrowScanInitGlobal, // Use DuckDB's init
 	                              ArrowTableFunction::ArrowScanInitLocal); // Use DuckDB's init
 
-	// Disable pushdown for snowflake_query - user provides the query explicitly
-	snowflake_query.projection_pushdown = false;
+	// Enable projection pushdown so DuckDB's Arrow scanner can prune columns locally.
+	// This is required in DuckDB v1.5+ where the Arrow scanner expects projection_pushdown=true
+	// to correctly track column IDs during ArrowToDuckDB conversion.
+	// Note: this only allows DuckDB to select columns from the Arrow batch locally —
+	// it does NOT rewrite the SQL sent to Snowflake (factory->projection_pushdown_enabled stays false).
+	snowflake_query.projection_pushdown = true;
 	snowflake_query.filter_pushdown = false;
 
 	return snowflake_query;
