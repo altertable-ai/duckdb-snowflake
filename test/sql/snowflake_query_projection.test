@@ -1,8 +1,9 @@
 # name: test/sql/snowflake_query_projection.test
 # description: Regression test for snowflake_query with column-pruning queries (COUNT(*), single column select)
+# group: [sql]
+
 #              DuckDB v1.5 Arrow scanner requires projection_pushdown=true to correctly track column IDs
 #              during ArrowToDuckDB conversion, even when the extension doesn't rewrite SQL for Snowflake.
-# group: [sql]
 
 require snowflake
 
