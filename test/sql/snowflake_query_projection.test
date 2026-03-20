@@ -1,0 +1,64 @@
+# name: test/sql/snowflake_query_projection.test
+# description: Regression test for snowflake_query with column-pruning queries (COUNT(*), single column select)
+# group: [sql]
+
+#              DuckDB v1.5 Arrow scanner requires projection_pushdown=true to correctly track column IDs
+#              during ArrowToDuckDB conversion, even when the extension doesn't rewrite SQL for Snowflake.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_KEYPAIR_USER
+
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_proj_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Test 1: SELECT * from multi-column query (baseline — always worked)
+query II
+SELECT C_CUSTKEY, C_NAME FROM snowflake_query('SELECT C_CUSTKEY, C_NAME FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER LIMIT 1', 'sf_proj_secret');
+----
+60001	Customer#000060001
+
+# Test 2: COUNT(*) on multi-column result (regression — crashed before fix)
+# DuckDB prunes all columns for COUNT(*), which triggered index-out-of-bounds
+# in ArrowToDuckDB when projection_pushdown was false
+query I
+SELECT COUNT(*) FROM snowflake_query('SELECT C_CUSTKEY, C_NAME FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER LIMIT 5', 'sf_proj_secret');
+----
+5
+
+# Test 3: Single column select from multi-column query (regression — same root cause)
+query I
+SELECT C_CUSTKEY FROM snowflake_query('SELECT C_CUSTKEY, C_NAME, C_ADDRESS FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER LIMIT 2', 'sf_proj_secret');
+----
+60001
+60002
+
+# Test 4: COUNT(*) > 0 pattern (common usage that triggered the crash)
+query I
+SELECT COUNT(*) > 0 FROM snowflake_query('SELECT C_CUSTKEY, C_NAME FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER LIMIT 5', 'sf_proj_secret');
+----
+true
+
+# Cleanup
+statement ok
+DROP SECRET IF EXISTS sf_proj_secret;

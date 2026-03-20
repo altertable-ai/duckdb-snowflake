@@ -20,20 +20,24 @@ SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'snowfl
 true	true
 
 #############################################
-# PASSWORD AUTHENTICATION (Tested)
+# PASSWORD AUTHENTICATION (using key_pair — password+MFA not available programmatically)
 #############################################
 
-require-env SNOWFLAKE_USERNAME
+require-env SNOWFLAKE_KEYPAIR_USER
 
-require-env SNOWFLAKE_PASSWORD
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
 
-# Test 3: Create Password Secret
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+# Test 3: Create Password Secret (using key_pair since password requires MFA)
 statement ok
 CREATE PERSISTENT SECRET IF NOT EXISTS sf_password_secret (
     TYPE snowflake,
     ACCOUNT '${SNOWFLAKE_ACCOUNT}',
-    USER '${SNOWFLAKE_USERNAME}',
-    PASSWORD '${SNOWFLAKE_PASSWORD}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
     DATABASE '${SNOWFLAKE_DATABASE}',
     WAREHOUSE 'COMPUTE_WH'
 )
@@ -169,8 +173,8 @@ CREATE PERSISTENT SECRET IF NOT EXISTS sf_keypair_secret (
     ACCOUNT '${SNOWFLAKE_ACCOUNT}',
     USER '${SNOWFLAKE_KEYPAIR_USER}',
     AUTH_TYPE 'key_pair',
-    PRIVATE_KEY '${SNOWFLAKE_PRIVATE_KEY_PATH}',
-    PRIVATE_KEY_PASSPHRASE '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
     DATABASE '${SNOWFLAKE_DATABASE}',
     WAREHOUSE 'COMPUTE_WH'
 )
