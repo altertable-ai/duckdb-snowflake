@@ -263,7 +263,21 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 			buffer << key_file.rdbuf();
 			private_key_content = buffer.str();
 		} else if (!config.private_key.empty()) {
-			private_key_content = config.private_key;
+			// Backward compatibility with v1.4.3: auto-detect if this is a file path
+			// In v1.4.3, users could pass either a file path or key content to private_key
+			// and the code would auto-detect based on FileExists()
+			if (FileExists(config.private_key)) {
+				std::ifstream key_file(config.private_key);
+				if (!key_file.is_open()) {
+					throw IOException("Failed to open private key file: " + config.private_key);
+				}
+				std::stringstream buffer;
+				buffer << key_file.rdbuf();
+				private_key_content = buffer.str();
+			} else {
+				// Assume it's the key content directly
+				private_key_content = config.private_key;
+			}
 		}
 
 		if (!private_key_content.empty()) {
