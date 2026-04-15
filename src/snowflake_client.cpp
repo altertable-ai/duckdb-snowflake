@@ -230,8 +230,8 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		// Set the OAuth token
 		if (!config.oauth_token.empty()) {
 			LOG_DEBUG("Setting token (length: %zu)\n", config.oauth_token.length());
-			status =
-			    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.auth_token", config.oauth_token.c_str(), &error);
+			status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.auth_token",
+			                               config.oauth_token.c_str(), &error);
 			CheckError(status, "Failed to set OAuth token", &error);
 			LOG_DEBUG("Token set successfully\n");
 		}
@@ -312,8 +312,8 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.auth_type", "auth_okta", &error);
 		CheckError(status, "Failed to set Okta auth type", &error);
 		if (!config.okta_url.empty()) {
-			status =
-			    AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.auth_okta_url", config.okta_url.c_str(), &error);
+			status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.okta_url",
+			                               config.okta_url.c_str(), &error);
 			CheckError(status, "Failed to set Okta URL", &error);
 		}
 		break;
@@ -349,7 +349,7 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 
 	// Set query timeout
 	std::string timeout_str = std::to_string(config.query_timeout);
-	status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_session_keep_alive",
+	status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.client_option.keep_session_alive",
 	                               config.keep_alive ? "true" : "false", &error);
 	CheckError(status, "Failed to set keep alive", &error);
 
