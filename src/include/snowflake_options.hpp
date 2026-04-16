@@ -17,6 +17,15 @@ struct SnowflakeOptions {
 	//! users must explicitly opt-in.
 	bool enable_pushdown = false;
 
+	//! Enable GEOGRAPHY/GEOMETRY column detection via catalog metadata.
+	//! When enabled, the extension queries INFORMATION_SCHEMA.COLUMNS to detect
+	//! geo columns, wraps them with ST_ASWKB() for WKB output, and annotates
+	//! the Arrow schema with geoarrow.wkb so DuckDB imports as native GEOMETRY.
+	//! Default is false because it adds an extra metadata query per table scan.
+	//! Workaround for Snowflake not exposing the original geo type in query
+	//! response metadata (SNOWFLAKE_TYPE='object' is ambiguous with VARIANT).
+	bool enable_geo = false;
+
 	//! Whether to treat table and column names from Snowflake as case-sensitive.
 	//! If false (default), names will be converted to lowercase to match DuckDB's
 	//! typical behavior.

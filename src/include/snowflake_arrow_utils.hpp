@@ -7,6 +7,7 @@
 #include "duckdb/storage/table/scan_state.hpp"
 
 #include <utility>
+#include <unordered_set>
 #include "snowflake_client_manager.hpp"
 
 namespace duckdb {
@@ -43,6 +44,10 @@ struct SnowflakeArrowStreamFactory {
 	TableFilterSet *current_filters = nullptr;
 	vector<string> column_names; // Maps column indices to names for filter building
 
+	// Geo column names detected from Snowflake Arrow metadata (SNOWFLAKE_TYPE='object')
+	// When non-empty, queries wrap these columns with ST_ASWKB() for WKB conversion
+	unordered_set<string> geo_column_names;
+
 	SnowflakeArrowStreamFactory(shared_ptr<snowflake::SnowflakeClient> conn, const std::string &query_str)
 	    : connection(std::move(conn)), query(query_str), modified_query(query_str) {
 		std::memset(&statement, 0, sizeof(statement));
@@ -66,6 +71,9 @@ struct SnowflakeArrowStreamFactory {
 	// the source
 	void UpdatePushdownParameters(const vector<string> &projection, TableFilterSet *filter_set);
 };
+
+// Build Arrow C Data Interface metadata buffer with a single key-value pair
+unique_ptr<char[]> BuildArrowMetadata(const string &key, const string &value);
 
 // Function to produce an ArrowArrayStreamWrapper from the factory
 // This is called by DuckDB's arrow_scan when it needs to start scanning data

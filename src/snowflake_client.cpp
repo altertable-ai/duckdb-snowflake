@@ -525,6 +525,26 @@ vector<SnowflakeColumn> SnowflakeClient::GetTableInfo(ClientContext &context, co
 	return col_data;
 }
 
+unordered_set<string> SnowflakeClient::DetectGeoColumns(ClientContext &context, const string &schema,
+                                                        const string &table_name) {
+	const string upper_schema = StringUtil::Upper(schema);
+	const string upper_table = StringUtil::Upper(table_name);
+
+	const string query = "SELECT COLUMN_NAME FROM " + config.database +
+	                     ".information_schema.columns WHERE table_schema = '" + upper_schema + "' AND table_name = '" +
+	                     upper_table + "' AND DATA_TYPE IN ('GEOGRAPHY', 'GEOMETRY')";
+
+	DPRINT("DetectGeoColumns query: %s\n", query.c_str());
+	auto result = ExecuteAndGetStrings(context, query, {"COLUMN_NAME"});
+
+	unordered_set<string> geo_cols;
+	for (const auto &col_name : result[0]) {
+		geo_cols.insert(col_name);
+		DPRINT("DetectGeoColumns: found geo column '%s'\n", col_name.c_str());
+	}
+	return geo_cols;
+}
+
 vector<vector<string>> SnowflakeClient::ExecuteAndGetStrings(ClientContext &context, const string &query,
                                                              const vector<string> &expected_col_names) {
 	if (!connected) {

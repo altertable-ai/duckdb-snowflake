@@ -3,8 +3,37 @@
 #include "snowflake_query_builder.hpp"
 #include "snowflake_client_manager.hpp"
 #include "duckdb/common/exception.hpp"
+#include <cstring>
 
 namespace duckdb {
+
+// ---------------------------------------------------------------------------
+// GeoArrow metadata annotation
+// ---------------------------------------------------------------------------
+
+// Build Arrow C Data Interface metadata buffer with a single key-value pair
+// Format: int32 num_pairs, then for each pair: int32 key_len, key_bytes, int32 val_len, val_bytes
+unique_ptr<char[]> BuildArrowMetadata(const string &key, const string &value) {
+	int32_t num_pairs = 1;
+	int32_t key_len = static_cast<int32_t>(key.size());
+	int32_t val_len = static_cast<int32_t>(value.size());
+	size_t total_size = sizeof(int32_t) + sizeof(int32_t) + key.size() + sizeof(int32_t) + value.size();
+
+	auto buffer = make_uniq_array<char>(total_size);
+	char *ptr = buffer.get();
+
+	memcpy(ptr, &num_pairs, sizeof(int32_t));
+	ptr += sizeof(int32_t);
+	memcpy(ptr, &key_len, sizeof(int32_t));
+	ptr += sizeof(int32_t);
+	memcpy(ptr, key.data(), key.size());
+	ptr += key.size();
+	memcpy(ptr, &val_len, sizeof(int32_t));
+	ptr += sizeof(int32_t);
+	memcpy(ptr, value.data(), value.size());
+
+	return buffer;
+}
 
 // Helper function to detect authentication/session-related errors
 // Only checks for specific Snowflake error codes to avoid false positives
@@ -65,16 +94,10 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 		}
 	}
 
-	// Apply pushdown if enabled (this modifies the query before execution)
-	if (factory->filter_pushdown_enabled || factory->projection_pushdown_enabled) {
-		// Extract projection columns from parameters
-		vector<string> projection_cols;
-		for (const auto &col : parameters.projected_columns.columns) {
-			projection_cols.push_back(col);
-		}
-
-		// Call UpdatePushdownParameters to build modified query
-		factory->UpdatePushdownParameters(projection_cols, parameters.filters);
+	// Apply pushdown if enabled, or if geo columns need ST_ASWKB wrapping
+	if (factory->filter_pushdown_enabled || factory->projection_pushdown_enabled ||
+	    !factory->geo_column_names.empty()) {
+		factory->UpdatePushdownParameters(parameters.projected_columns.columns, parameters.filters);
 	} else {
 		// No pushdown - use original query as-is (like main branch behavior)
 		DPRINT("Pushdown disabled, using original query: %s\n", factory->query.c_str());
@@ -130,7 +153,6 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 	}
 
 	// Execute the query and get the ArrowArrayStream
-	// This is where the actual query execution happens
 	auto wrapper = make_uniq<SnowflakeArrowArrayStreamWrapper>();
 	struct ArrowArrayStream adbc_stream;
 	int64_t rows_affected;
@@ -310,19 +332,54 @@ void SnowflakeArrowStreamFactory::UpdatePushdownParameters(const vector<string> 
 			cols_to_project = projection_columns;
 		}
 
+		// If there are geo columns but no explicit projection, expand to all columns
+		// so BuildQuery can wrap geo columns with ST_ASWKB
+		if (cols_to_project.empty() && !geo_column_names.empty()) {
+			cols_to_project = column_names;
+		}
+
 		// Only push filters if filter pushdown is enabled
 		if (filter_pushdown_enabled) {
 			filters_to_push = current_filters;
 		}
 
-		// Build the complete query using AST construction
-		// Note: When filters are present, the filter column indices refer to
-		// positions in the projection list (cols_to_project), NOT the original
-		// schema (column_names). So we pass cols_to_project as the column mapping
-		// for filters.
+		// Build query with proper Snowflake quoting for column names.
+		// DuckDB's AST serializer uses WriteOptionallyQuoted which doesn't always
+		// quote, but Snowflake needs quotes to preserve case for lowercase columns.
 		vector<string> filter_column_names = cols_to_project.empty() ? column_names : cols_to_project;
-		modified_query = snowflake::SnowflakeQueryBuilder::BuildQuery(table_name, cols_to_project, filters_to_push,
-		                                                              filter_column_names);
+
+		// Build SELECT clause with Snowflake double-quote identifiers
+		string select_clause;
+		if (cols_to_project.empty()) {
+			select_clause = "SELECT *";
+		} else {
+			select_clause = "SELECT ";
+			for (size_t i = 0; i < cols_to_project.size(); i++) {
+				if (i > 0) {
+					select_clause += ", ";
+				}
+				string quoted = "\"" + cols_to_project[i] + "\"";
+				if (geo_column_names.count(cols_to_project[i])) {
+					select_clause += "ST_ASWKB(" + quoted + ") AS " + quoted;
+				} else {
+					select_clause += quoted;
+				}
+			}
+		}
+
+		// Build WHERE clause using AST for correct filter expression handling
+		string where_clause;
+		if (filters_to_push && !filters_to_push->filters.empty()) {
+			auto full_query =
+			    snowflake::SnowflakeQueryBuilder::BuildQuery(table_name, {}, filters_to_push, filter_column_names);
+			string upper_query = StringUtil::Upper(full_query);
+			size_t where_pos = upper_query.find(" WHERE ");
+			if (where_pos != string::npos) {
+				where_clause = full_query.substr(where_pos);
+			}
+		}
+
+		modified_query = select_clause + " FROM " + table_name + where_clause;
 
 		DPRINT("Pushdown applied:\n  Original: %s\n  Modified: %s\n", query.c_str(), modified_query.c_str());
 

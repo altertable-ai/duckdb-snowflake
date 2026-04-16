@@ -1,0 +1,130 @@
+# name: test/sql/snowflake_geometry.test
+# description: Test GEOGRAPHY/GEOMETRY column support via ATTACH
+# group: [sql]
+
+#
+# Setup: Run the following SQL in Snowflake to create the test table:
+#
+#   CREATE SCHEMA IF NOT EXISTS GEO_TEST;
+#   CREATE OR REPLACE TABLE GEO_TEST.GEO_POINTS (
+#       ID INTEGER,
+#       NAME VARCHAR,
+#       LOCATION GEOGRAPHY
+#   );
+#   INSERT INTO GEO_TEST.GEO_POINTS VALUES
+#       (1, 'New York',    ST_GEOGRAPHYFROMWKT('POINT(-74.006 40.7128)')),
+#       (2, 'London',      ST_GEOGRAPHYFROMWKT('POINT(-0.1276 51.5074)')),
+#       (3, 'Tokyo',       ST_GEOGRAPHYFROMWKT('POINT(139.6917 35.6895)')),
+#       (4, 'Null Island', NULL);
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_USERNAME
+
+require-env SNOWFLAKE_PRIVATE_KEY_FILE
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+CREATE SECRET sf_geo_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_USERNAME}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+statement ok
+ATTACH '' AS sf_geo (TYPE SNOWFLAKE, SECRET sf_geo_secret, READ_ONLY, ENABLE_GEO TRUE);
+
+# Test 1: GEOGRAPHY column is detected as GEOMETRY type
+query IIII
+SELECT database_name, schema_name, table_name, column_name
+FROM duckdb_columns()
+WHERE database_name = 'sf_geo'
+  AND table_name = 'GEO_POINTS'
+  AND column_name = 'LOCATION';
+----
+sf_geo	GEO_TEST	GEO_POINTS	LOCATION
+
+query I
+SELECT data_type
+FROM duckdb_columns()
+WHERE database_name = 'sf_geo'
+  AND table_name = 'GEO_POINTS'
+  AND column_name = 'LOCATION';
+----
+GEOMETRY
+
+# Test 2: Select all columns including geometry
+query IT
+SELECT ID, NAME
+FROM sf_geo.geo_test.geo_points
+ORDER BY ID;
+----
+1	New York
+2	London
+3	Tokyo
+4	Null Island
+
+# Test 3: typeof() returns GEOMETRY for geo column
+query T
+SELECT typeof(LOCATION)
+FROM sf_geo.geo_test.geo_points
+WHERE ID = 1;
+----
+GEOMETRY
+
+# Test 4: NULL geometry values are handled correctly
+query T
+SELECT LOCATION IS NULL
+FROM sf_geo.geo_test.geo_points
+WHERE ID = 4;
+----
+true
+
+# Test 5: Non-null geometry values are not null
+query I
+SELECT COUNT(*)
+FROM sf_geo.geo_test.geo_points
+WHERE LOCATION IS NOT NULL;
+----
+3
+
+# Test 6: Select only non-geo columns (projection pushdown)
+query I
+SELECT COUNT(*)
+FROM sf_geo.geo_test.geo_points;
+----
+4
+
+# Test 7: Select only the geo column
+query I
+SELECT COUNT(LOCATION)
+FROM sf_geo.geo_test.geo_points;
+----
+3
+
+# Test 8: Filter on non-geo column with geo column in result
+query IT
+SELECT ID, typeof(LOCATION)
+FROM sf_geo.geo_test.geo_points
+WHERE ID <= 2
+ORDER BY ID;
+----
+1	GEOMETRY
+2	GEOMETRY
+
+# Cleanup
+statement ok
+DETACH sf_geo;
+
+statement ok
+DROP SECRET IF EXISTS sf_geo_secret;
