@@ -1,0 +1,65 @@
+# name: test/sql/snowflake_database_parameter.test
+# description: Test that the DATABASE parameter is optional when creating Snowflake secrets
+# group: [sql]
+
+require snowflake
+
+# Test 1: Creating a secret without DATABASE should succeed
+# DATABASE was previously in the always_required list, causing this to fail
+# with "Missing required field: database"
+statement ok
+CREATE SECRET sf_no_db_secret (
+    TYPE snowflake,
+    ACCOUNT 'test_account',
+    USER 'test_user',
+    PASSWORD 'test_password'
+)
+
+# Test 2: Verify the secret was created
+query T
+SELECT name FROM duckdb_secrets() WHERE name = 'sf_no_db_secret'
+----
+sf_no_db_secret
+
+# Test 3: Creating a secret with DATABASE should still work
+statement ok
+CREATE SECRET sf_with_db_secret (
+    TYPE snowflake,
+    ACCOUNT 'test_account',
+    USER 'test_user',
+    PASSWORD 'test_password',
+    DATABASE 'my_database'
+)
+
+# Test 4: Verify the secret was created
+query T
+SELECT name FROM duckdb_secrets() WHERE name = 'sf_with_db_secret'
+----
+sf_with_db_secret
+
+# Test 5: USER and ACCOUNT are still required - missing USER should fail
+statement error
+CREATE SECRET sf_missing_user (
+    TYPE snowflake,
+    ACCOUNT 'test_account',
+    PASSWORD 'test_password'
+)
+----
+Snowflake secret requires field 'user'
+
+# Test 6: Missing ACCOUNT should fail
+statement error
+CREATE SECRET sf_missing_account (
+    TYPE snowflake,
+    USER 'test_user',
+    PASSWORD 'test_password'
+)
+----
+Snowflake secret requires field 'account'
+
+# Cleanup
+statement ok
+DROP SECRET IF EXISTS sf_no_db_secret
+
+statement ok
+DROP SECRET IF EXISTS sf_with_db_secret

@@ -38,8 +38,8 @@ CREATE SECRET my_snowflake_secret (
     ACCOUNT 'your_account_identifier',
     USER 'your_username',
     PASSWORD 'your_password',
-    DATABASE 'your_database',
-    WAREHOUSE 'your_warehouse'
+    DATABASE 'your_database',      -- Optional: default database
+    WAREHOUSE 'your_warehouse'     -- Optional: default warehouse
 );
 
 -- 2.1 Query Snowflake data using pass through query
@@ -257,9 +257,9 @@ CREATE SECRET my_snowflake_secret (
     ACCOUNT 'myaccountidentifier',
     USER 'myusername',
     PASSWORD 'mypassword',
-    DATABASE 'mydatabase',
-    WAREHOUSE 'mywarehouse',
-    SCHEMA 'myschema'  -- Optional: default schema
+    DATABASE 'mydatabase',          -- Optional: default database
+    WAREHOUSE 'mywarehouse',        -- Optional: default warehouse
+    SCHEMA 'myschema'               -- Optional: default schema
 );
 ```
 

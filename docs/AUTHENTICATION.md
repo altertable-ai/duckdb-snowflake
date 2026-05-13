@@ -37,6 +37,8 @@ The DuckDB Snowflake extension supports multiple authentication methods to conne
 
 Standard username and password authentication.
 
+> **Required parameters**: `ACCOUNT`, `USER`. All other parameters (`DATABASE`, `WAREHOUSE`, `SCHEMA`, etc.) are optional. When `DATABASE` is omitted, use fully qualified table names (e.g., `mydb.myschema.mytable`).
+
 ```sql
 CREATE SECRET my_snowflake_secret (
     TYPE snowflake,
