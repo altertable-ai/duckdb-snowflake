@@ -264,7 +264,7 @@ GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE PUBLIC;
 
 ### Step 3: Test in DuckDB
 
-**Note**: Native Okta authentication requires browser interaction for SSO.
+**Note**: Native Okta authentication sends username and password directly to Okta's native API — no browser interaction is required. This is distinct from External Browser (SAML 2.0) SSO.
 
 ```sql
 CREATE SECRET snowflake_okta (
@@ -272,12 +272,13 @@ CREATE SECRET snowflake_okta (
     ACCOUNT 'YOUR_ACCOUNT_IDENTIFIER',
     USER 'okta_user@yourcompany.com',
     AUTH_TYPE 'okta',
+    PASSWORD 'your_okta_password',
     OKTA_URL 'https://yourcompany.okta.com',
     DATABASE 'YOUR_DATABASE',
     WAREHOUSE 'COMPUTE_WH'
 );
 
--- This will open a browser window for Okta authentication
+-- Authenticates directly with Okta (no browser needed)
 ATTACH '' AS sf_okta (TYPE snowflake, SECRET snowflake_okta, READ_ONLY);
 SELECT * FROM sf_okta.information_schema.tables LIMIT 5;
 ```
@@ -286,6 +287,7 @@ SELECT * FROM sf_okta.information_schema.tables LIMIT 5;
 
 ```bash
 export SNOWFLAKE_OKTA_USER="okta_user@yourcompany.com"
+export SNOWFLAKE_OKTA_PASSWORD="your_okta_password"
 export SNOWFLAKE_OKTA_URL="https://yourcompany.okta.com"
 ```
 
@@ -378,6 +380,7 @@ export SNOWFLAKE_PRIVATE_KEY_PASSPHRASE="YOUR_PASSPHRASE"
 
 # Okta
 export SNOWFLAKE_OKTA_USER="okta_user@yourcompany.com"
+export SNOWFLAKE_OKTA_PASSWORD="your_okta_password"
 export SNOWFLAKE_OKTA_URL="https://yourcompany.okta.com"
 
 # MFA
