@@ -9,6 +9,8 @@ jobs:
   test-snowflake:
     name: Test Snowflake Extension
     runs-on: macos-latest
+    permissions:
+      contents: read
     if: ${{ vars.SKIP_SNOWFLAKE_TESTS != 'true' }}
     
     steps:
