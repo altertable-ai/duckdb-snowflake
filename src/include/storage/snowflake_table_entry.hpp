@@ -1,8 +1,11 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "snowflake_config.hpp"
 #include "snowflake_client.hpp"
+
+#include <mutex>
 
 namespace duckdb {
 namespace snowflake {
@@ -61,7 +64,17 @@ public:
 
 private:
 	shared_ptr<SnowflakeClient> client;
+	//! Serializes access to the schema cache and the lazy columns load below.
+	//! DuckDB shares catalog table entries across connections; concurrent
+	//! GetScanFunction calls on the same entry would otherwise race on the
+	//! unique_ptr reassignment (use-after-free) and on columns_loaded.
+	std::mutex bind_mutex;
 	bool columns_loaded = false;
+	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchema call.
+	//! Subsequent GetScanFunction binds deep-copy out of this instead of paying
+	//! another Snowflake roundtrip — see issue #33 (CREATE VIEW latency).
+	//! Guarded by bind_mutex above.
+	unique_ptr<ArrowSchemaWrapper> cached_schema_root;
 };
 } // namespace snowflake
 } // namespace duckdb
