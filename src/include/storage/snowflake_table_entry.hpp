@@ -5,8 +5,6 @@
 #include "snowflake_config.hpp"
 #include "snowflake_client.hpp"
 
-#include <mutex>
-
 namespace duckdb {
 namespace snowflake {
 
@@ -56,6 +54,14 @@ public:
 		return client->GetConfig();
 	}
 
+	//! Eagerly fetch the Arrow schema from Snowflake and populate both the
+	//! inherited TableCatalogEntry::columns ColumnList and the cached schema
+	//! used by GetScanFunction. MUST be called before the entry is published
+	//! into the catalog set, while still owned exclusively by the loader; once
+	//! published, `columns` and `cached_schema_root` are read concurrently by
+	//! `duckdb_columns()`, plan binding, etc., without any lock.
+	void LoadColumnsAndSchema(ClientContext &context);
+
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
 
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
@@ -64,16 +70,10 @@ public:
 
 private:
 	shared_ptr<SnowflakeClient> client;
-	//! Serializes access to the schema cache and the lazy columns load below.
-	//! DuckDB shares catalog table entries across connections; concurrent
-	//! GetScanFunction calls on the same entry would otherwise race on the
-	//! unique_ptr reassignment (use-after-free) and on columns_loaded.
-	std::mutex bind_mutex;
-	bool columns_loaded = false;
-	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchema call.
-	//! Subsequent GetScanFunction binds deep-copy out of this instead of paying
-	//! another Snowflake roundtrip — see issue #33 (CREATE VIEW latency).
-	//! Guarded by bind_mutex above.
+	//! Arrow schema fetched once at construction time by LoadColumnsAndSchema.
+	//! Read-only after publication; GetScanFunction deep-copies out of it on
+	//! every bind, so no further mutation of `columns` or this pointer is
+	//! required.
 	unique_ptr<ArrowSchemaWrapper> cached_schema_root;
 };
 } // namespace snowflake

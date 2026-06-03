@@ -25,13 +25,66 @@ static void CloneCachedSchema(ArrowSchema &src, ArrowSchema &dst) {
 	}
 }
 
+//! Build the `SELECT *` query that SnowflakeGetArrowSchema/ADBC needs to
+//! resolve the table's Arrow schema. Shared between LoadColumnsAndSchema (one
+//! roundtrip at catalog-list time) and GetScanFunction (factory query used at
+//! scan time) so both refer to the same source table.
+static string BuildSelectAllQuery(const SnowflakeConfig &config, const string &schema_name, const string &table_name) {
+	return "SELECT * FROM " + QuoteSnowflakeIdentifier(config.database) + "." + QuoteSnowflakeIdentifier(schema_name) +
+	       "." + QuoteSnowflakeIdentifier(table_name);
+}
+
+void SnowflakeTableEntry::LoadColumnsAndSchema(ClientContext &context) {
+	DPRINT("SnowflakeTableEntry::LoadColumnsAndSchema called for %s.%s.%s\n", client->GetConfig().database.c_str(),
+	       schema.name.c_str(), name.c_str());
+
+	auto &config = client->GetConfig();
+	string query = BuildSelectAllQuery(config, schema.name, name);
+
+	auto &client_manager = SnowflakeClientManager::GetInstance();
+	auto connection = client_manager.GetConnection(config);
+	auto factory = make_uniq<SnowflakeArrowStreamFactory>(connection, query);
+
+	// One ADBC ExecuteSchema roundtrip per table to resolve the Arrow schema.
+	// Lightweight: it's a metadata-only call, not a full query execution.
+	ArrowSchemaWrapper schema_root;
+	SnowflakeGetArrowSchema(reinterpret_cast<ArrowArrayStream *>(factory.get()), schema_root.arrow_schema);
+
+	// Derive DuckDB names/types from the Arrow schema.
+	ArrowTableSchema arrow_table;
+	ArrowTableFunction::PopulateArrowTableSchema(context, arrow_table, schema_root.arrow_schema);
+	const auto names = arrow_table.GetNames();
+	const auto return_types = arrow_table.GetTypes();
+
+	// Cache a deep copy of the Arrow schema so GetScanFunction can build bind
+	// data without paying another Snowflake roundtrip.
+	cached_schema_root = make_uniq<ArrowSchemaWrapper>();
+	CloneCachedSchema(schema_root.arrow_schema, cached_schema_root->arrow_schema);
+
+	// Populate the inherited columns ColumnList. After this method returns the
+	// entry is published into the catalog set and any future read of
+	// `columns` (e.g. duckdb_columns(), plan binding) sees a fully-built list
+	// without taking any lock.
+	for (idx_t i = 0; i < static_cast<idx_t>(names.size()); i++) {
+		DPRINT("  Column: %s, Type: %s\n", names[i].c_str(), return_types[i].ToString().c_str());
+		columns.AddColumn(ColumnDefinition(names[i], return_types[i]));
+	}
+}
+
 TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
 	DPRINT("SnowflakeTableEntry::GetScanFunction called for table %s.%s.%s\n", client->GetConfig().database.c_str(),
 	       schema.name.c_str(), name.c_str());
 
+	if (!cached_schema_root || !cached_schema_root->arrow_schema.release) {
+		// Invariant: SnowflakeTableSet::LoadEntries must have called
+		// LoadColumnsAndSchema before publishing this entry. If we hit this,
+		// some other code path constructed the entry and skipped the load.
+		throw InternalException("SnowflakeTableEntry %s.%s.%s used before LoadColumnsAndSchema", catalog.GetName(),
+		                        schema.name, name);
+	}
+
 	auto &config = client->GetConfig();
-	string query = "SELECT * FROM " + QuoteSnowflakeIdentifier(config.database) + "." +
-	               QuoteSnowflakeIdentifier(schema.name) + "." + QuoteSnowflakeIdentifier(name);
+	string query = BuildSelectAllQuery(config, schema.name, name);
 	DPRINT("SnowflakeTableEntry: Query = '%s'\n", query.c_str());
 
 	// TODO consider maintaining a thread-safe pool of connections in client, so
@@ -57,56 +110,23 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 	// Set pushdown settings on bind_data (critical for avoiding crashes!)
 	snowflake_bind_data->projection_pushdown_enabled = catalog_options.enable_pushdown;
 
-	vector<string> names;
-	vector<LogicalType> return_types;
+	// `cached_schema_root` was populated once at LoadColumnsAndSchema time and
+	// is immutable afterwards, so this read is race-free with any concurrent
+	// reader of the same entry (e.g. duckdb_columns(), plan binding on another
+	// query).
+	DPRINT("SnowflakeTableEntry: Cloning cached Arrow schema (no SF roundtrip)\n");
+	CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
 
-	// Serialize access to the schema cache and the lazy columns population.
-	// DuckDB catalog entries are shared across connections, so two concurrent
-	// GetScanFunction calls on the same SnowflakeTableEntry can race on the
-	// unique_ptr reassignment (use-after-free of the old ArrowSchemaWrapper)
-	// and on the columns_loaded flag. Holding bind_mutex for the whole block
-	// also collapses two concurrent first-binders into one Snowflake roundtrip
-	// rather than two.
-	{
-		std::lock_guard<std::mutex> lock(bind_mutex);
+	// Use the new DuckDB API to populate the arrow table schema
+	ArrowTableFunction::PopulateArrowTableSchema(context, snowflake_bind_data->arrow_table,
+	                                             snowflake_bind_data->schema_root.arrow_schema);
+	const auto names = snowflake_bind_data->arrow_table.GetNames();
+	const auto return_types = snowflake_bind_data->arrow_table.GetTypes();
+	snowflake_bind_data->all_types = return_types;
 
-		// Populate bind_data->schema_root either from cache (no Snowflake roundtrip)
-		// or by issuing the SnowflakeGetArrowSchema call and seeding the cache.
-		if (cached_schema_root && cached_schema_root->arrow_schema.release) {
-			DPRINT("SnowflakeTableEntry: Reusing cached Arrow schema (no SF roundtrip)\n");
-			CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
-		} else {
-			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchema\n");
-			SnowflakeGetArrowSchema(reinterpret_cast<ArrowArrayStream *>(snowflake_bind_data->factory.get()),
-			                        snowflake_bind_data->schema_root.arrow_schema);
-			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchema completed\n");
-
-			// Seed the cache with a deep copy of the just-fetched schema so future
-			// binds on this table entry can skip the Snowflake roundtrip.
-			cached_schema_root = make_uniq<ArrowSchemaWrapper>();
-			CloneCachedSchema(snowflake_bind_data->schema_root.arrow_schema, cached_schema_root->arrow_schema);
-		}
-
-		// Use the new DuckDB API to populate the arrow table schema
-		ArrowTableFunction::PopulateArrowTableSchema(context, snowflake_bind_data->arrow_table,
-		                                             snowflake_bind_data->schema_root.arrow_schema);
-		names = snowflake_bind_data->arrow_table.GetNames();
-		return_types = snowflake_bind_data->arrow_table.GetTypes();
-		snowflake_bind_data->all_types = return_types;
-
-		// Set column names on factory for filter building (maps column indices to
-		// names)
-		snowflake_bind_data->factory->column_names = names;
-
-		// Populate columns if not already loaded (first time accessing this table)
-		if (!columns_loaded) {
-			for (idx_t i = 0; i < static_cast<idx_t>(names.size()); i++) {
-				DPRINT("  Column: %s, Type: %s\n", names[i].c_str(), return_types[i].ToString().c_str());
-				columns.AddColumn(ColumnDefinition(names[i], return_types[i]));
-			}
-			columns_loaded = true;
-		}
-	}
+	// Set column names on factory for filter building (maps column indices to
+	// names)
+	snowflake_bind_data->factory->column_names = names;
 
 	DPRINT("SnowflakeTableEntry: Setting bind_data at %p\n", (void *)snowflake_bind_data.get());
 	bind_data = std::move(snowflake_bind_data);
