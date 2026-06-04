@@ -233,14 +233,19 @@ LIMIT 1000
 
 require-env SNOWFLAKE_OKTA_USER
 
+require-env SNOWFLAKE_OKTA_PASSWORD
+
 require-env SNOWFLAKE_OKTA_URL
 
 # Test 27: Create Okta Secret
+# Note: PASSWORD is required for native Okta auth — the ADBC driver's auth_okta
+# mode sends username+password to Okta's native authentication API.
 statement ok
 CREATE PERSISTENT SECRET IF NOT EXISTS sf_okta_secret (
     TYPE snowflake,
     ACCOUNT '${SNOWFLAKE_ACCOUNT}',
     USER '${SNOWFLAKE_OKTA_USER}',
+    PASSWORD '${SNOWFLAKE_OKTA_PASSWORD}',
     AUTH_TYPE 'okta',
     OKTA_URL '${SNOWFLAKE_OKTA_URL}',
     DATABASE '${SNOWFLAKE_DATABASE}',

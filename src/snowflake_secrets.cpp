@@ -122,6 +122,9 @@ snowflake::SnowflakeConfig SnowflakeSecretsHelper::GetCredentials(ClientContext 
 		} else if (StringUtil::CIEquals(auth_type_str, "okta")) {
 			config.auth_type = snowflake::SnowflakeAuthType::OKTA;
 			config.okta_url = GetSecretString(*kv_secret, "okta_url");
+			// Okta native auth needs the password forwarded to ADBC; without
+			// it the Snowflake Go driver fails with "password is empty".
+			config.password = GetSecretString(*kv_secret, "password");
 		} else if (StringUtil::CIEquals(auth_type_str, "mfa")) {
 			config.auth_type = snowflake::SnowflakeAuthType::MFA;
 		} else {

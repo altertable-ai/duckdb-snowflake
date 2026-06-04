@@ -317,6 +317,10 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 			                               config.okta_url.c_str(), &error);
 			CheckError(status, "Failed to set Okta URL", &error);
 		}
+		if (!config.password.empty()) {
+			status = AdbcDatabaseSetOption(&database, "password", config.password.c_str(), &error);
+			CheckError(status, "Failed to set password for Okta", &error);
+		}
 		break;
 	case SnowflakeAuthType::MFA:
 		if (!config.username.empty()) {
