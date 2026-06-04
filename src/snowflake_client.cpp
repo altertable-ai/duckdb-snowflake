@@ -339,7 +339,7 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	}
 
 	if (!config.database.empty()) {
-		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.database", config.database.c_str(), &error);
+		status = AdbcDatabaseSetOption(&database, "adbc.snowflake.sql.db", config.database.c_str(), &error);
 		CheckError(status, "Failed to set database", &error);
 	}
 
