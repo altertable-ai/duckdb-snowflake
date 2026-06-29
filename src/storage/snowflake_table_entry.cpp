@@ -76,10 +76,14 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 			DPRINT("SnowflakeTableEntry: Reusing cached Arrow schema (no SF roundtrip)\n");
 			CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
 		} else {
-			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchema\n");
-			SnowflakeGetArrowSchema(reinterpret_cast<ArrowArrayStream *>(snowflake_bind_data->factory.get()),
-			                        snowflake_bind_data->schema_root.arrow_schema);
-			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchema completed\n");
+			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchemaViaQuery\n");
+			// Use a 1-row query execution for the bind schema (data-path) so the
+			// driver's geoarrow.wkb tags (applied by peeking the first batch) and
+			// correct Snowflake TIMESTAMP units reach DuckDB. ExecuteSchema metadata
+			// carries neither.
+			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->factory.get(),
+			                                snowflake_bind_data->schema_root.arrow_schema);
+			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchemaViaQuery completed\n");
 
 			// Seed the cache with a deep copy of the just-fetched schema so future
 			// binds on this table entry can skip the Snowflake roundtrip.

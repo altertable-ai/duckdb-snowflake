@@ -84,6 +84,13 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 //   Arrow schema
 void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema);
 
+// Fetch the Arrow schema by executing the query with a 1-row limit (data-path
+// schema) instead of AdbcStatementExecuteSchema. Required so geoarrow.wkb column
+// tags (which the driver applies by peeking the first data batch) reach DuckDB's
+// bind, and so Snowflake TIMESTAMP units are reported correctly. Uses a temporary
+// statement/stream released before returning.
+void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema);
+
 // Execute the query and cache the resulting Arrow stream in the factory.
 // Also populates schema from the stream's get_schema callback.
 // Used by snowflake_query bind to avoid double-execution: the cached stream is

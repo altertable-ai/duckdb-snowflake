@@ -223,6 +223,78 @@ void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema)
 	}
 }
 
+void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
+	// Fetch the bind schema by executing the query with a 1-row limit and reading
+	// the schema off the executed stream, instead of AdbcStatementExecuteSchema.
+	// Two reasons the data-path schema is required:
+	//   * GEOGRAPHY/GEOMETRY: the driver tags columns geoarrow.wkb by peeking the
+	//     first data batch, so the tag is absent from the ExecuteSchema metadata.
+	//     A 1-row result lets the driver peek (a 0-row result cannot be peeked).
+	//   * Timestamps: ExecuteSchema mis-reports Snowflake TIMESTAMP units.
+	// Uses a temporary statement/stream released before returning so it does not
+	// disturb the factory's own statement used during scan production.
+	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 1";
+
+	AdbcError error;
+	std::memset(&error, 0, sizeof(error));
+
+	AdbcStatement probe_stmt;
+	std::memset(&probe_stmt, 0, sizeof(probe_stmt));
+	AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &probe_stmt, &error);
+	if (status != ADBC_STATUS_OK) {
+		throw IOException("Failed to create statement for schema probe");
+	}
+
+	status = AdbcStatementSetSqlQuery(&probe_stmt, probe_query.c_str(), &error);
+	if (status != ADBC_STATUS_OK) {
+		std::string msg = "Failed to set schema-probe query: ";
+		if (error.message) {
+			msg += error.message;
+			if (error.release) {
+				error.release(&error);
+			}
+		}
+		AdbcStatementRelease(&probe_stmt, nullptr);
+		throw IOException(msg);
+	}
+
+	ArrowArrayStream probe_stream;
+	std::memset(&probe_stream, 0, sizeof(probe_stream));
+	int64_t rows_affected = 0;
+	AdbcError exec_error;
+	std::memset(&exec_error, 0, sizeof(exec_error));
+	status = AdbcStatementExecuteQuery(&probe_stmt, &probe_stream, &rows_affected, &exec_error);
+	if (status != ADBC_STATUS_OK) {
+		std::string msg = "Failed to execute schema-probe query: ";
+		if (exec_error.message) {
+			msg += exec_error.message;
+			if (exec_error.release) {
+				exec_error.release(&exec_error);
+			}
+		}
+		AdbcStatementRelease(&probe_stmt, nullptr);
+		if (IsAuthenticationError(msg)) {
+			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
+			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			throw IOException(msg + "\n\nThe authentication token may have expired. "
+			                        "Please retry your query - a fresh connection will be established automatically.");
+		}
+		throw IOException(msg);
+	}
+
+	std::memset(&schema, 0, sizeof(schema));
+	int rc = probe_stream.get_schema ? probe_stream.get_schema(&probe_stream, &schema) : -1;
+
+	if (probe_stream.release) {
+		probe_stream.release(&probe_stream);
+	}
+	AdbcStatementRelease(&probe_stmt, nullptr);
+
+	if (rc != 0) {
+		throw IOException("Failed to get schema from schema-probe stream");
+	}
+}
+
 void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));

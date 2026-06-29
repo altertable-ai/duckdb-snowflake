@@ -363,6 +363,42 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	                               config.use_high_precision ? "true" : "false", &error);
 	CheckError(status, "Failed to set high precision mode", &error);
 
+	// Request EWKB output for GEOGRAPHY/GEOMETRY so the ADBC driver (Apache Arrow
+	// ADBC Snowflake driver >= the geoarrow release) returns geo columns as binary
+	// tagged with the `geoarrow.wkb` Arrow extension type (plus CRS metadata).
+	// DuckDB's Arrow scanner then imports them as native GEOMETRY — no ST_ASWKB
+	// rewrite or schema patching needed. These are set non-fatally: older drivers
+	// don't recognize the option, in which case geo columns simply stay as text
+	// (the prior behavior) instead of breaking the connection.
+	{
+		AdbcError geo_error;
+		std::memset(&geo_error, 0, sizeof(geo_error));
+		AdbcStatusCode geo_status = AdbcDatabaseSetOption(
+		    &database, "adbc.snowflake.sql.client_option.geography_output_format", "EWKB", &geo_error);
+		if (geo_status != ADBC_STATUS_OK) {
+			DPRINT("Snowflake: geography_output_format option not supported by this driver (%s); geo columns will "
+			       "stay as text\n",
+			       geo_error.message ? geo_error.message : "unknown");
+			if (geo_error.release) {
+				geo_error.release(&geo_error);
+			}
+		}
+	}
+	{
+		AdbcError geo_error;
+		std::memset(&geo_error, 0, sizeof(geo_error));
+		AdbcStatusCode geo_status = AdbcDatabaseSetOption(
+		    &database, "adbc.snowflake.sql.client_option.geometry_output_format", "EWKB", &geo_error);
+		if (geo_status != ADBC_STATUS_OK) {
+			DPRINT("Snowflake: geometry_output_format option not supported by this driver (%s); geo columns will "
+			       "stay as text\n",
+			       geo_error.message ? geo_error.message : "unknown");
+			if (geo_error.release) {
+				geo_error.release(&geo_error);
+			}
+		}
+	}
+
 	// Initialize the database
 	status = AdbcDatabaseInit(&database, &error);
 	CheckError(status, "Failed to initialize database", &error);

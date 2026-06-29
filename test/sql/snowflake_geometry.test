@@ -1,0 +1,102 @@
+# name: test/sql/snowflake_geometry.test
+# description: Native GEOGRAPHY/GEOMETRY support via the ADBC driver's GeoArrow output
+# group: [sql]
+#
+# The extension requests GEOGRAPHY/GEOMETRY_OUTPUT_FORMAT=EWKB on every connection,
+# so the Apache Arrow ADBC Snowflake driver (>= the GeoArrow release) returns geo
+# columns as binary tagged with the geoarrow.wkb Arrow extension type. DuckDB's
+# Arrow scanner imports those as native GEOMETRY — no ST_ASWKB rewrite, no
+# INFORMATION_SCHEMA detection, no opt-in flag. NULLs are handled by the driver.
+#
+# Requires a writable SNOWFLAKE_DATABASE (the test creates and drops its fixture)
+# and an ADBC driver new enough to emit geoarrow.wkb; with an older driver geo
+# columns come back as text and the typeof() assertions below fail.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_USERNAME
+
+require-env SNOWFLAKE_PRIVATE_KEY_FILE
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+CREATE SECRET sf_geo_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_USERNAME}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Fixture: a GEOGRAPHY table with three points and one NULL (Null Island row).
+statement ok
+SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST', 'sf_geo_secret');
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE TABLE ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS (ID INTEGER, NAME VARCHAR, LOCATION GEOGRAPHY)', 'sf_geo_secret');
+
+statement ok
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 1, ''New York'', ST_GEOGRAPHYFROMWKT(''POINT(-74.006 40.7128)'')', 'sf_geo_secret');
+
+statement ok
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 2, ''London'', ST_GEOGRAPHYFROMWKT(''POINT(-0.1276 51.5074)'')', 'sf_geo_secret');
+
+statement ok
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 4, ''Null Island'', NULL', 'sf_geo_secret');
+
+# --- snowflake_query path: schema comes from the executed (peeked) stream ---
+query I
+SELECT typeof(LOCATION) FROM snowflake_query('SELECT LOCATION FROM ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS WHERE ID = 1', 'sf_geo_secret');
+----
+GEOMETRY
+
+# --- ATTACH path ---
+statement ok
+ATTACH '' AS sf_geo (TYPE SNOWFLAKE, SECRET sf_geo_secret, READ_ONLY);
+
+# GEOGRAPHY column is exposed as native GEOMETRY
+query I
+SELECT typeof(LOCATION) FROM sf_geo.DUCKDB_GEO_TEST.GEO_POINTS WHERE ID = 1;
+----
+GEOMETRY
+
+# Non-null rows count
+query I
+SELECT COUNT(LOCATION) FROM sf_geo.DUCKDB_GEO_TEST.GEO_POINTS;
+----
+2
+
+# NULL geometry is handled (this materializes the NULL row — the previous
+# ST_ASWKB workaround errored here with "Skipping beyond end of binary data")
+query II
+SELECT ID, LOCATION IS NULL FROM sf_geo.DUCKDB_GEO_TEST.GEO_POINTS ORDER BY ID;
+----
+1	false
+2	false
+4	true
+
+# Non-geo column projection still works alongside the geo column
+query IT
+SELECT ID, NAME FROM sf_geo.DUCKDB_GEO_TEST.GEO_POINTS ORDER BY ID;
+----
+1	New York
+2	London
+4	Null Island
+
+# Cleanup
+statement ok
+DETACH sf_geo;
+
+statement ok
+SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST CASCADE', 'sf_geo_secret');
+
+statement ok
+DROP SECRET IF EXISTS sf_geo_secret;
