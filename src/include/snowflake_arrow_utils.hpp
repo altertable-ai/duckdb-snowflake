@@ -38,6 +38,11 @@ struct SnowflakeArrowStreamFactory {
 	bool filter_pushdown_enabled = false;
 	bool projection_pushdown_enabled = false;
 
+	// True for the snowflake_query() passthrough SELECT path: the base query is
+	// arbitrary user SQL, so projection is applied by wrapping it as a subquery
+	// (SELECT <cols> FROM (<query>)) rather than by parsing a table name out of it.
+	bool wrap_as_subquery = false;
+
 	// Pushdown parameters (set by DuckDB via UpdatePushdownParameters)
 	vector<string> projection_columns;
 	TableFilterSet *current_filters = nullptr;
@@ -65,6 +70,14 @@ struct SnowflakeArrowStreamFactory {
 	// This is called by DuckDB when it wants to push filters and projections to
 	// the source
 	void UpdatePushdownParameters(const vector<string> &projection, TableFilterSet *filter_set);
+
+	// Apply a projection to the snowflake_query() passthrough path by wrapping the
+	// user query as a subquery: SELECT <quoted projection cols> FROM (<query>).
+	// DuckDB's Arrow scanner reads projected columns positionally (child[k] == the
+	// k-th requested column), so the produced stream MUST expose exactly these
+	// columns in this order — see issue #32 (wrong-column reads / SIGSEGV when the
+	// produced stream returned all columns regardless of the projection).
+	void UpdatePassthroughProjection(const vector<string> &projection);
 };
 
 // Function to produce an ArrowArrayStreamWrapper from the factory
