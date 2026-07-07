@@ -73,8 +73,14 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 			projection_cols.push_back(col);
 		}
 
-		// Call UpdatePushdownParameters to build modified query
-		factory->UpdatePushdownParameters(projection_cols, parameters.filters);
+		// Build the modified query. The snowflake_query() passthrough path wraps the
+		// user SQL as a subquery (projection only); the ATTACH path parses the table
+		// name out of the base query and rebuilds it.
+		if (factory->wrap_as_subquery) {
+			factory->UpdatePassthroughProjection(projection_cols);
+		} else {
+			factory->UpdatePushdownParameters(projection_cols, parameters.filters);
+		}
 	} else {
 		// No pushdown - use original query as-is (like main branch behavior)
 		DPRINT("Pushdown disabled, using original query: %s\n", factory->query.c_str());
@@ -223,6 +229,76 @@ void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema)
 	}
 }
 
+void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
+	// Wrap the bind query as a 0-row subquery so Snowflake returns the column
+	// schema without scanning data. We take the schema from the executed stream
+	// (the data path) rather than AdbcStatementExecuteSchema, whose metadata
+	// mis-reports Snowflake TIMESTAMP units (see header / issue #44).
+	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 0";
+
+	AdbcError error;
+	std::memset(&error, 0, sizeof(error));
+
+	// Use a temporary statement so we don't initialize/consume factory->statement,
+	// which the scan production path creates and uses on its own.
+	AdbcStatement probe_stmt;
+	std::memset(&probe_stmt, 0, sizeof(probe_stmt));
+	AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &probe_stmt, &error);
+	if (status != ADBC_STATUS_OK) {
+		throw IOException("Failed to create statement for schema probe");
+	}
+
+	status = AdbcStatementSetSqlQuery(&probe_stmt, probe_query.c_str(), &error);
+	if (status != ADBC_STATUS_OK) {
+		std::string msg = "Failed to set schema-probe query: ";
+		if (error.message) {
+			msg += error.message;
+			if (error.release) {
+				error.release(&error);
+			}
+		}
+		AdbcStatementRelease(&probe_stmt, nullptr);
+		throw IOException(msg);
+	}
+
+	ArrowArrayStream probe_stream;
+	std::memset(&probe_stream, 0, sizeof(probe_stream));
+	int64_t rows_affected = 0;
+	AdbcError exec_error;
+	std::memset(&exec_error, 0, sizeof(exec_error));
+	status = AdbcStatementExecuteQuery(&probe_stmt, &probe_stream, &rows_affected, &exec_error);
+	if (status != ADBC_STATUS_OK) {
+		std::string msg = "Failed to execute schema-probe query: ";
+		if (exec_error.message) {
+			msg += exec_error.message;
+			if (exec_error.release) {
+				exec_error.release(&exec_error);
+			}
+		}
+		AdbcStatementRelease(&probe_stmt, nullptr);
+		if (IsAuthenticationError(msg)) {
+			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
+			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			throw IOException(msg + "\n\nThe authentication token may have expired. "
+			                        "Please retry your query - a fresh connection will be established automatically.");
+		}
+		throw IOException(msg);
+	}
+
+	std::memset(&schema, 0, sizeof(schema));
+	int rc = probe_stream.get_schema ? probe_stream.get_schema(&probe_stream, &schema) : -1;
+
+	// Release the probe stream and statement; the caller only needs the schema.
+	if (probe_stream.release) {
+		probe_stream.release(&probe_stream);
+	}
+	AdbcStatementRelease(&probe_stmt, nullptr);
+
+	if (rc != 0) {
+		throw IOException("Failed to get schema from schema-probe stream");
+	}
+}
+
 void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));
@@ -334,6 +410,30 @@ void SnowflakeArrowStreamFactory::UpdatePushdownParameters(const vector<string> 
 		DPRINT("Pushdown failed: %s, using original query\n", e.what());
 		modified_query = query;
 	}
+}
+
+void SnowflakeArrowStreamFactory::UpdatePassthroughProjection(const vector<string> &projection) {
+	projection_columns = projection;
+
+	// No projection requested (e.g. SELECT *): run the user query unchanged.
+	if (projection.empty()) {
+		modified_query = query;
+		return;
+	}
+
+	// Select exactly the requested columns, in the requested order, from the user
+	// query wrapped as a derived table. The names come from the result schema, so
+	// quoting the exact name round-trips for both folded-uppercase and
+	// case-sensitive columns.
+	string cols;
+	for (size_t i = 0; i < projection.size(); i++) {
+		if (i > 0) {
+			cols += ", ";
+		}
+		cols += snowflake::QuoteSnowflakeIdentifier(projection[i]);
+	}
+	modified_query = "SELECT " + cols + " FROM (" + query + ") AS __sf_passthrough";
+	DPRINT("Passthrough projection applied:\n  Original: %s\n  Modified: %s\n", query.c_str(), modified_query.c_str());
 }
 
 } // namespace duckdb

@@ -71,15 +71,17 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 		std::lock_guard<std::mutex> lock(bind_mutex);
 
 		// Populate bind_data->schema_root either from cache (no Snowflake roundtrip)
-		// or by issuing the SnowflakeGetArrowSchema call and seeding the cache.
+		// or by issuing the schema-probe query and seeding the cache.
 		if (cached_schema_root && cached_schema_root->arrow_schema.release) {
 			DPRINT("SnowflakeTableEntry: Reusing cached Arrow schema (no SF roundtrip)\n");
 			CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
 		} else {
-			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchema\n");
-			SnowflakeGetArrowSchema(reinterpret_cast<ArrowArrayStream *>(snowflake_bind_data->factory.get()),
-			                        snowflake_bind_data->schema_root.arrow_schema);
-			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchema completed\n");
+			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchemaViaQuery\n");
+			// Use a LIMIT 0 query execution (data-path schema) rather than ExecuteSchema,
+			// whose metadata mis-reports Snowflake TIMESTAMP units (issue #44).
+			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->factory.get(),
+			                                snowflake_bind_data->schema_root.arrow_schema);
+			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchemaViaQuery completed\n");
 
 			// Seed the cache with a deep copy of the just-fetched schema so future
 			// binds on this table entry can skip the Snowflake roundtrip.

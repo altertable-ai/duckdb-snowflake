@@ -59,6 +59,28 @@ SELECT COUNT(*) > 0 FROM snowflake_query('SELECT C_CUSTKEY, C_NAME FROM ${SNOWFL
 ----
 true
 
+# Test 5: project a SINGLE non-first VARCHAR column (issue #32).
+# Before the fix this SIGSEGV'd: DuckDB reads the produced stream positionally
+# (child[0]), but the cached stream returned all columns, so a decimal buffer was
+# decoded as a string.
+query I
+SELECT C_NAME FROM snowflake_query('SELECT C_CUSTKEY, C_NAME, C_ADDRESS FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER WHERE C_CUSTKEY = 60001', 'sf_proj_secret');
+----
+Customer#000060001
+
+# Test 6: reordered/skipping projection returns the CORRECT column, not a neighbor.
+# Before the fix this silently returned C_NAME's value in the C_ADDRESS slot.
+query II
+SELECT C_CUSTKEY, C_ADDRESS FROM snowflake_query('SELECT C_CUSTKEY, C_NAME, C_ADDRESS FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER WHERE C_CUSTKEY = 60001', 'sf_proj_secret');
+----
+60001	9Ii4zQn9cX
+
+# Test 7: project the last column only (string), reordered away from position 0
+query I
+SELECT C_ADDRESS FROM snowflake_query('SELECT C_CUSTKEY, C_NAME, C_ADDRESS FROM ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER WHERE C_CUSTKEY = 60001', 'sf_proj_secret');
+----
+9Ii4zQn9cX
+
 # Cleanup
 statement ok
 DROP SECRET IF EXISTS sf_proj_secret;

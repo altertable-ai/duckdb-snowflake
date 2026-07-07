@@ -63,5 +63,13 @@ private:
 //! internal quotes escaped by doubling.
 string QuoteSnowflakeIdentifier(const string &name);
 
+//! Test-only: render the SQL that SnowflakeQueryBuilder::BuildQuery would emit
+//! for a given table, projection list (comma-separated), and optional single
+//! equality filter on one of the projected columns. Lets query_builder.test
+//! assert Snowflake-correct identifier quoting without a live Snowflake table
+//! that has lowercase column names.
+string RenderPushdownQueryForTest(const string &table_name, const string &projection_csv,
+                                  const string &filter_eq_column);
+
 } // namespace snowflake
 } // namespace duckdb
