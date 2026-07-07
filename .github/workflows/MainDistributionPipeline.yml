@@ -21,10 +21,10 @@ jobs:
     name: Build extension binaries
     permissions:
       contents: read
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.4
     with:
-      duckdb_version: v1.5.3
-      ci_tools_version: v1.5.3
+      duckdb_version: v1.5.4
+      ci_tools_version: v1.5.4
       extension_name: snowflake
       skip_tests: true  # Tests run in separate workflow with Snowflake credentials
     secrets: inherit
@@ -33,10 +33,10 @@ jobs:
     name: Code Quality Check
     permissions:
       contents: read
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.4
     with:
-      duckdb_version: v1.5.3
-      ci_tools_version: v1.5.3
+      duckdb_version: v1.5.4
+      ci_tools_version: v1.5.4
       extension_name: snowflake
       format_checks: 'format;tidy'
     secrets: inherit
@@ -71,7 +71,7 @@ jobs:
       - name: Download extension artifact
         uses: actions/download-artifact@v4
         with:
-          name: snowflake-v1.5.3-extension-${{ matrix.platform.name }}
+          name: snowflake-v1.5.4-extension-${{ matrix.platform.name }}
           path: ./extension-artifact
 
       - name: Download ADBC driver
