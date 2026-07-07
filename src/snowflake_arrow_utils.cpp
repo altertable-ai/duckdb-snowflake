@@ -230,11 +230,14 @@ void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema)
 }
 
 void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
-	// Wrap the bind query as a 0-row subquery so Snowflake returns the column
-	// schema without scanning data. We take the schema from the executed stream
-	// (the data path) rather than AdbcStatementExecuteSchema, whose metadata
-	// mis-reports Snowflake TIMESTAMP units (see header / issue #44).
-	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 0";
+	// Fetch the bind schema by executing the query with a 1-row limit and reading
+	// the schema off the executed stream, instead of AdbcStatementExecuteSchema.
+	// Two reasons the data-path schema is required:
+	//   * GEOGRAPHY/GEOMETRY: the driver tags columns geoarrow.wkb by peeking the
+	//     first data batch, so the tag is absent from the ExecuteSchema metadata.
+	//     A 1-row result lets the driver peek (a 0-row result cannot be peeked).
+	//   * Timestamps: ExecuteSchema mis-reports Snowflake TIMESTAMP units (issue #44).
+	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 1";
 
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));

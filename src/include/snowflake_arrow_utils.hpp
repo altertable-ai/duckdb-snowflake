@@ -97,14 +97,13 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 //   Arrow schema
 void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema);
 
-// Fetch the Arrow schema by executing the query with a 0-row limit, instead of
-// AdbcStatementExecuteSchema. The ADBC driver's ExecuteSchema metadata reports a
-// timestamp unit/precision (and tz) for Snowflake TIMESTAMP types that disagrees
-// with the unit it actually emits on the data stream (issue #44: TIMESTAMP_NTZ(6)
-// read as nanoseconds via the attached catalog). Running the real query with
-// `LIMIT 0` returns the authoritative data-path schema with zero data scanned.
-// Uses a temporary statement and stream that are released before returning, so it
-// does not disturb the factory's own statement used later during scan production.
+// Fetch the Arrow schema by executing the query with a 1-row limit (data-path
+// schema) instead of AdbcStatementExecuteSchema. Required so geoarrow.wkb column
+// tags (which the driver applies by peeking the first data batch) reach DuckDB's
+// bind, and so Snowflake TIMESTAMP units are reported correctly (issue #44:
+// ExecuteSchema metadata mis-reports TIMESTAMP_NTZ units). Uses a temporary
+// statement/stream released before returning, so it does not disturb the
+// factory's own statement used later during scan production.
 void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema);
 
 // Execute the query and cache the resulting Arrow stream in the factory.

@@ -77,8 +77,10 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 			CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
 		} else {
 			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchemaViaQuery\n");
-			// Use a LIMIT 0 query execution (data-path schema) rather than ExecuteSchema,
-			// whose metadata mis-reports Snowflake TIMESTAMP units (issue #44).
+			// Use a 1-row query execution for the bind schema (data-path) so the
+			// driver's geoarrow.wkb tags (applied by peeking the first batch) and
+			// correct Snowflake TIMESTAMP units (issue #44) reach DuckDB.
+			// ExecuteSchema metadata carries neither.
 			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->factory.get(),
 			                                snowflake_bind_data->schema_root.arrow_schema);
 			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchemaViaQuery completed\n");
