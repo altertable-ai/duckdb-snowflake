@@ -74,7 +74,7 @@ detect_platform() {
             ;;
         MINGW*|CYGWIN*|MSYS*|Windows*)
             ASSET_NAME="snowflake_windows_amd64_v${DRIVER_VERSION}.tar.gz"
-            LIB_IN_TARBALL="adbc_driver_snowflake.dll"
+            LIB_IN_TARBALL="libadbc_driver_snowflake.dll"
             PLATFORM="windows_amd64"
             ;;
         *)

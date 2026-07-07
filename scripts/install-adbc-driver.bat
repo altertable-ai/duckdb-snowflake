@@ -127,8 +127,8 @@ if errorlevel 1 (
 REM The extension resolves the driver by the fixed name
 REM libadbc_driver_snowflake.so on every platform (see CMakeLists.txt),
 REM so rename the .dll accordingly.
-if exist "adbc_driver_snowflake.dll" (
-    move /Y "adbc_driver_snowflake.dll" "libadbc_driver_snowflake.so" >nul
+if exist "libadbc_driver_snowflake.dll" (
+    move /Y "libadbc_driver_snowflake.dll" "libadbc_driver_snowflake.so" >nul
     echo %SUCCESS% Extracted libadbc_driver_snowflake.so
 ) else (
     echo %ERROR% Driver library not found in tarball

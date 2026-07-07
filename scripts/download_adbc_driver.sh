@@ -44,7 +44,7 @@ case "$OS" in
         ;;
     MINGW*|CYGWIN*|MSYS*|Windows*)
         ASSET="snowflake_windows_amd64_v${DRIVER_VERSION}.tar.gz"
-        LIB_IN_TARBALL="adbc_driver_snowflake.dll"
+        LIB_IN_TARBALL="libadbc_driver_snowflake.dll"
         ;;
     *)
         echo "Unsupported operating system: $OS"; exit 1

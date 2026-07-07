@@ -197,7 +197,7 @@ del snowflake_windows_amd64_v1.11.0.tar.gz
 
 # Place in DuckDB extensions directory under the fixed name (DuckDB v1.5.4)
 mkdir C:\Users\%USERNAME%\.duckdb\extensions\v1.5.4\windows_amd64
-move adbc_driver_snowflake.dll C:\Users\%USERNAME%\.duckdb\extensions\v1.5.4\windows_amd64\libadbc_driver_snowflake.so
+move libadbc_driver_snowflake.dll C:\Users\%USERNAME%\.duckdb\extensions\v1.5.4\windows_amd64\libadbc_driver_snowflake.so
 ```
 
 ### Verification

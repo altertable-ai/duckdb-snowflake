@@ -67,10 +67,10 @@ jobs:
             lib_in_tarball: libadbc_driver_snowflake.dylib
           - name: windows_amd64
             driver_asset: windows_amd64
-            lib_in_tarball: adbc_driver_snowflake.dll
+            lib_in_tarball: libadbc_driver_snowflake.dll
           - name: windows_amd64_mingw
             driver_asset: windows_amd64
-            lib_in_tarball: adbc_driver_snowflake.dll
+            lib_in_tarball: libadbc_driver_snowflake.dll
     
     steps:
       - name: Checkout repository
