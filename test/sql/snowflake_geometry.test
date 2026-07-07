@@ -1,6 +1,7 @@
 # name: test/sql/snowflake_geometry.test
 # description: Native GEOGRAPHY/GEOMETRY support via the ADBC driver's GeoArrow output
 # group: [sql]
+
 #
 # The extension requests GEOGRAPHY/GEOMETRY_OUTPUT_FORMAT=EWKB on every connection,
 # so the Apache Arrow ADBC Snowflake driver (>= the GeoArrow release) returns geo
