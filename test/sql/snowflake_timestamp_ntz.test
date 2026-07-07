@@ -1,6 +1,7 @@
 # name: test/sql/snowflake_timestamp_ntz.test
 # description: Regression test for issue #44 — TIMESTAMP_NTZ(6) read via attached catalog
 # group: [sql]
+
 #
 # Issue #44: reading a Snowflake TIMESTAMP_NTZ(6) column through the ATTACH'd
 # catalog returned timestamps near 1970 — the microsecond epoch was interpreted
