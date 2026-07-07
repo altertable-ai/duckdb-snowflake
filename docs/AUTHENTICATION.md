@@ -1,6 +1,6 @@
 # Authentication Methods
 
-> **Version requirement:** The authentication methods described here (OAuth, key pair, Okta, EXT_BROWSER, MFA) require the Snowflake extension build for DuckDB **v1.4.3** or newer. Install DuckDB 1.4.3 and load the Snowflake extension from the community repository (`INSTALL snowflake FROM community;`) before following these steps.
+> **Version requirement:** The authentication methods described here (OAuth, key pair, Okta, EXT_BROWSER, MFA) require the Snowflake extension build for DuckDB **v1.5.3** or newer. Install DuckDB 1.5.3 and load the Snowflake extension from the community repository (`INSTALL snowflake FROM community;`) before following these steps.
 
 The DuckDB Snowflake extension supports multiple authentication methods to connect to Snowflake. Choose the method that best fits your security requirements and infrastructure.
 
@@ -36,6 +36,8 @@ The DuckDB Snowflake extension supports multiple authentication methods to conne
 ## 1. Password Authentication (Default)
 
 Standard username and password authentication.
+
+> **Required parameters**: `ACCOUNT`, `USER`. All other parameters (`DATABASE`, `WAREHOUSE`, `SCHEMA`, etc.) are optional. When `DATABASE` is omitted, use fully qualified table names (e.g., `mydb.myschema.mytable`).
 
 ```sql
 CREATE SECRET my_snowflake_secret (
@@ -331,9 +333,9 @@ SELECT SYSTEM$SHOW_SAML_IDP_METADATA('auth0_saml');
 
 ## 5. Native Okta Authentication
 
-Direct authentication with Okta using a custom Okta URL.
+Direct authentication with Okta using username, password, and a custom Okta URL. The ADBC driver's `auth_okta` mode sends credentials directly to Okta's native authentication API — no browser interaction is required.
 
-**Important**: This authentication method only works if your organization uses **Okta** as the identity provider. It is **not compatible with Auth0**. If you are using Auth0, use **EXT_BROWSER** (SAML 2.0) authentication instead.
+**Important**: This authentication method only works if your organization uses **Okta** as the identity provider and has [Native SSO — Okta](https://docs.snowflake.com/en/user-guide/admin-security-fed-auth-use#native-sso-okta-only) configured for Snowflake. It is **not compatible with Auth0**. If you are using Auth0, use **EXT_BROWSER** (SAML 2.0) authentication instead.
 
 ```sql
 CREATE SECRET my_okta_secret (
@@ -341,6 +343,7 @@ CREATE SECRET my_okta_secret (
     ACCOUNT 'myaccount',
     USER 'myusername',
     AUTH_TYPE 'okta',
+    PASSWORD 'mypassword',
     OKTA_URL 'https://yourcompany.okta.com',
     DATABASE 'mydatabase',
     WAREHOUSE 'mywarehouse'
@@ -349,7 +352,7 @@ CREATE SECRET my_okta_secret (
 
 **Connection String:**
 ```
-account=myaccount;user=myusername;auth_type=okta;okta_url=https://yourcompany.okta.com;database=mydb;warehouse=mywh
+account=myaccount;user=myusername;password=mypassword;auth_type=okta;okta_url=https://yourcompany.okta.com;database=mydb;warehouse=mywh
 ```
 
 ## 6. Multi-Factor Authentication (MFA)

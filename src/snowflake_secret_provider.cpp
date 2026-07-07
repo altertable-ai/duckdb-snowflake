@@ -147,7 +147,7 @@ static bool TryGetValueCaseInsensitive(const SnowflakeSecret &secret, const stri
 //! Validate that all required fields are present
 void SnowflakeSecret::Validate() const {
 	// Always required fields
-	vector<string> always_required = {"user", "account", "database"};
+	vector<string> always_required = {"user", "account"};
 	vector<string> missing_fields;
 
 	for (const auto &field : always_required) {
@@ -178,12 +178,15 @@ void SnowflakeSecret::Validate() const {
 		    token_value.GetValue<string>().empty()) {
 			throw InvalidInputException("Snowflake secret with auth_type 'oauth' requires 'token' field");
 		}
+	} else if (StringUtil::CIEquals(auth_type, "ext_browser") || StringUtil::CIEquals(auth_type, "externalbrowser")) {
+		// External browser SSO flow — no credential field required on the secret
 	} else {
-		// password auth (default)
+		// password auth (default), and also MFA / Okta which still need a password
 		string pw = GetPassword();
 		if (pw.empty()) {
 			throw InvalidInputException("Snowflake secret requires 'password' field (or use auth_type 'key_pair' with "
-			                            "'private_key'/'private_key_file', or auth_type 'oauth' with 'token')");
+			                            "'private_key'/'private_key_file', auth_type 'oauth' with 'token', or "
+			                            "auth_type 'ext_browser')");
 		}
 	}
 }
@@ -233,7 +236,7 @@ unique_ptr<BaseSecret> CreateSnowflakeSecret(ClientContext &context, CreateSecre
 
 	// Extract Snowflake-specific parameters from the input options
 	// Always required fields
-	vector<string> always_required = {"user", "account", "database"};
+	vector<string> always_required = {"user", "account"};
 	// Conditionally required (password OR private_key/private_key_file based on auth_type)
 	vector<string> auth_fields = {"password",  "private_key", "private_key_file", "private_key_password",
 	                              "auth_type", "token",       "okta_url"};
@@ -244,8 +247,10 @@ unique_ptr<BaseSecret> CreateSnowflakeSecret(ClientContext &context, CreateSecre
 	    FindOptionCaseInsensitive(input.options, "private_key_password") == input.options.end()) {
 		secret->secret_map["private_key_password"] = passphrase_it->second;
 	}
-	// Optional fields
-	vector<string> optional_fields = {"warehouse", "schema", "role", "host", "port", "protocol"};
+	// Optional fields. database is here (not always_required) so that secrets
+	// can be created without a default database and rely on fully-qualified
+	// table names — but a provided database is still persisted into secret_map.
+	vector<string> optional_fields = {"database", "warehouse", "schema", "role", "host", "port", "protocol"};
 
 	// Process always required fields
 	for (const auto &field : always_required) {

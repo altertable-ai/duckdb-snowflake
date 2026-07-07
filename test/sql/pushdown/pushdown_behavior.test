@@ -4,11 +4,14 @@
 
 require snowflake
 
+# Uses key_pair auth — password+MFA is not available programmatically against this account
 require-env SNOWFLAKE_ACCOUNT
 
-require-env SNOWFLAKE_USERNAME
+require-env SNOWFLAKE_KEYPAIR_USER
 
-require-env SNOWFLAKE_PASSWORD
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
 
 require-env SNOWFLAKE_DATABASE
 
@@ -20,8 +23,10 @@ statement ok
 CREATE SECRET test_secret (
     TYPE snowflake,
     ACCOUNT '${SNOWFLAKE_ACCOUNT}',
-    USER '${SNOWFLAKE_USERNAME}',
-    PASSWORD '${SNOWFLAKE_PASSWORD}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
     DATABASE '${SNOWFLAKE_DATABASE}'
 );
 

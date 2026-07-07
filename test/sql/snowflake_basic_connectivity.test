@@ -173,16 +173,15 @@ CREATE PERSISTENT SECRET missing_auth (
 ----
 Snowflake secret requires 'password' field
 
-# Test 17: Create Secret with Missing Database (should fail)
-statement error
+# Test 17: DATABASE is optional — secrets without one are valid and must rely
+# on fully-qualified table names. See PR #35 / snowflake_database_parameter.test.
+statement ok
 CREATE PERSISTENT SECRET missing_database (
     TYPE snowflake,
     ACCOUNT 'test_account',
     USER 'test_user',
     PASSWORD 'test_pass'
 )
-----
-Snowflake secret requires field 'database'
 
 # Test 18: Create Secret with Invalid Type (should fail)
 statement error
@@ -229,6 +228,9 @@ DROP SECRET IF EXISTS snowflake_minimal
 
 statement ok
 DROP SECRET IF EXISTS snowflake_full
+
+statement ok
+DROP SECRET IF EXISTS missing_database
 
 statement ok
 DROP SECRET IF EXISTS duplicate_test
