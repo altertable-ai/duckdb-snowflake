@@ -148,14 +148,6 @@ LogicalType SnowflakeTypeToLogicalType(const std::string &snowflake_type_str) {
 		return ConvertNumber(precision, scale);
 	}
 
-	// Geospatial types
-	// Snowflake GEOGRAPHY/GEOMETRY → DuckDB's built-in GEOMETRY type (DuckDB 1.5+)
-	// The scan rewrites queries with ST_ASWKB() and annotates the Arrow schema
-	// with geoarrow.wkb so DuckDB's Arrow import converts WKB to GEOMETRY
-	if (base_type == "GEOGRAPHY" || base_type == "GEOMETRY") {
-		return LogicalType::GEOMETRY();
-	}
-
 	// TODO: Add more type mappings (TIMESTAMP_NTZ, TIMESTAMP_TZ, etc.)
 
 	return LogicalType::VARCHAR; // fallback type

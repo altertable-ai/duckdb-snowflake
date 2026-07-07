@@ -4,7 +4,6 @@
 #include "snowflake_config.hpp"
 
 #include "duckdb/common/adbc/adbc.h"
-#include <unordered_set>
 // Note: driver_manager functions are provided by DuckDB's build
 
 namespace duckdb {
@@ -37,12 +36,6 @@ public:
 	vector<string> ListSchemas(ClientContext &context);
 	vector<string> ListTables(ClientContext &context, const string &schema);
 	vector<SnowflakeColumn> GetTableInfo(ClientContext &context, const string &schema, const string &table_name);
-
-	//! Detect GEOGRAPHY/GEOMETRY columns via INFORMATION_SCHEMA catalog metadata.
-	//! Returns the set of column names that are geo types. This is the only reliable
-	//! way to identify geo columns because Snowflake's query response metadata
-	//! reports them as 'object' (same as VARIANT) regardless of output format.
-	unordered_set<string> DetectGeoColumns(ClientContext &context, const string &schema, const string &table_name);
 
 private:
 	SnowflakeConfig config;

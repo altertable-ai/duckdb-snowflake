@@ -78,27 +78,6 @@ static unique_ptr<Catalog> SnowflakeAttach(optional_ptr<StorageExtensionInfo> st
 		DPRINT("Pushdown DISABLED by default (no enable_pushdown option provided)\n");
 	}
 
-	// Parse enable_geo option
-	auto geo_entry = info.options.find("enable_geo");
-	if (geo_entry == info.options.end()) {
-		geo_entry = info.options.find("ENABLE_GEO");
-	}
-
-	if (geo_entry != info.options.end()) {
-		string geo_value = geo_entry->second.ToString();
-		if (geo_value == "true" || geo_value == "TRUE" || geo_value == "1") {
-			snowflake_options.enable_geo = true;
-			DPRINT("Geo detection ENABLED by user option\n");
-		} else if (geo_value == "false" || geo_value == "FALSE" || geo_value == "0") {
-			snowflake_options.enable_geo = false;
-			DPRINT("Geo detection DISABLED by user option\n");
-		} else {
-			throw InvalidInputException("Invalid value for enable_geo: '%s'. "
-			                            "Expected true/false or 1/0.",
-			                            geo_value.c_str());
-		}
-	}
-
 	DPRINT("Creating SnowflakeCatalog\n");
 	return make_uniq<SnowflakeCatalog>(db, config, snowflake_options);
 }

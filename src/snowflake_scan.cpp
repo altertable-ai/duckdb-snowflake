@@ -101,18 +101,20 @@ TableFunction GetSnowflakeScanFunction() {
 TableFunction GetSnowflakeTableScanFunction(bool enable_pushdown) {
 	// Create a table function for ATTACH
 	// This function is used by SnowflakeTableEntry::GetScanFunction()
+	// The enable_pushdown parameter controls whether DuckDB can push filters and
+	// projections
 
+	// Create a parameterless function for ATTACH operations
+	// TableEntry provides bind_data directly, so we don't need parameters or a
+	// bind function
 	TableFunction table_scan("snowflake_table_scan", {},
 	                         ArrowTableFunction::ArrowScanFunction,   // Use DuckDB's scan
 	                         nullptr,                                 // No bind function needed
 	                         ArrowTableFunction::ArrowScanInitGlobal, // Use DuckDB's init
 	                         ArrowTableFunction::ArrowScanInitLocal); // Use DuckDB's init
 
-	// Projection pushdown is always enabled because:
-	// 1. DuckDB requires it for Arrow extension types (geoarrow.wkb → GEOMETRY)
-	// 2. DuckDB's Arrow scanner needs it for count(*) queries
-	// Filter pushdown is controlled by the user's enable_pushdown setting
-	table_scan.projection_pushdown = true;
+	// Set pushdown flags based on the enable_pushdown parameter
+	table_scan.projection_pushdown = enable_pushdown;
 	table_scan.filter_pushdown = enable_pushdown;
 
 	return table_scan;
