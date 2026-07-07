@@ -13,8 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ADBC_VERSION: "1.8.0"
-  ADBC_RELEASE_TAG: "apache-arrow-adbc-20"
+  # ADBC Snowflake driver from the ADBC Driver Foundry (adbc-drivers/snowflake,
+  # release line go/vX.Y.Z). The apache/arrow-adbc wheels are deprecated and lack
+  # GeoArrow GEOGRAPHY/GEOMETRY support (shipped in go/v1.11.0).
+  ADBC_DRIVER_VERSION: "1.11.0"
 
 jobs:
   duckdb-stable-build:
@@ -50,19 +52,25 @@ jobs:
     strategy:
       fail-fast: false  # Continue building other platforms even if one fails
       matrix:
+        # No osx_amd64: the ADBC Driver Foundry ships no macOS x86_64 (Intel)
+        # build. Intel macOS users must build the driver from source and set
+        # SNOWFLAKE_ADBC_DRIVER_PATH (the bare extension still builds for it).
         platform:
           - name: linux_amd64
-            wheel_suffix: py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl
+            driver_asset: linux_amd64
+            lib_in_tarball: libadbc_driver_snowflake.so
           - name: linux_arm64
-            wheel_suffix: py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
-          - name: osx_amd64
-            wheel_suffix: py3-none-macosx_10_15_x86_64.whl
+            driver_asset: linux_arm64
+            lib_in_tarball: libadbc_driver_snowflake.so
           - name: osx_arm64
-            wheel_suffix: py3-none-macosx_11_0_arm64.whl
+            driver_asset: macos_arm64
+            lib_in_tarball: libadbc_driver_snowflake.dylib
           - name: windows_amd64
-            wheel_suffix: py3-none-win_amd64.whl
+            driver_asset: windows_amd64
+            lib_in_tarball: adbc_driver_snowflake.dll
           - name: windows_amd64_mingw
-            wheel_suffix: py3-none-win_amd64.whl
+            driver_asset: windows_amd64
+            lib_in_tarball: adbc_driver_snowflake.dll
     
     steps:
       - name: Checkout repository
@@ -78,20 +86,34 @@ jobs:
         run: |
           mkdir -p adbc_driver
           cd adbc_driver
-          WHEEL="adbc_driver_snowflake-${{ env.ADBC_VERSION }}-${{ matrix.platform.wheel_suffix }}"
-          WHEEL_URL="https://github.com/apache/arrow-adbc/releases/download/${{ env.ADBC_RELEASE_TAG }}/$WHEEL"
-          echo "Downloading ADBC driver from: $WHEEL_URL"
-          if ! wget -q "$WHEEL_URL"; then
-            echo "ERROR: Failed to download ADBC driver wheel: $WHEEL"
+          ASSET="snowflake_${{ matrix.platform.driver_asset }}_v${{ env.ADBC_DRIVER_VERSION }}.tar.gz"
+          ASSET_URL="https://github.com/adbc-drivers/snowflake/releases/download/go/v${{ env.ADBC_DRIVER_VERSION }}/$ASSET"
+          echo "Downloading ADBC driver from: $ASSET_URL"
+          if ! wget -q "$ASSET_URL"; then
+            echo "ERROR: Failed to download ADBC driver tarball: $ASSET"
             exit 1
           fi
-          if ! unzip -q "$WHEEL"; then
-            echo "ERROR: Failed to unzip ADBC driver wheel: $WHEEL"
+          if ! tar xzf "$ASSET"; then
+            echo "ERROR: Failed to extract ADBC driver tarball: $ASSET"
             exit 1
           fi
-          echo "Contents of adbc_driver_snowflake directory:"
-          ls -lah adbc_driver_snowflake/
-          
+          # The extension resolves the driver by the fixed name
+          # libadbc_driver_snowflake.so on every platform (see CMakeLists.txt),
+          # so normalize the macOS .dylib / Windows .dll to that name.
+          LIB="${{ matrix.platform.lib_in_tarball }}"
+          if [ ! -f "$LIB" ]; then
+            FOUND="$(find . -name "$LIB" -type f | head -1)"
+            if [ -z "$FOUND" ]; then
+              echo "ERROR: $LIB not found in $ASSET"
+              exit 1
+            fi
+            mv "$FOUND" "$LIB"
+          fi
+          if [ "$LIB" != "libadbc_driver_snowflake.so" ]; then
+            mv "$LIB" libadbc_driver_snowflake.so
+          fi
+          ls -lah libadbc_driver_snowflake.so
+
       - name: Create complete package
         run: |
           mkdir -p package/snowflake
@@ -105,40 +127,21 @@ jobs:
           cp "$EXTENSION_FILE" package/snowflake/
           echo "Copied extension file: $EXTENSION_FILE"
           
-          # Copy ADBC driver (all wheels contain .so or .dll, we copy whatever exists)
-          if [[ "${{ matrix.platform.name }}" == windows* ]]; then
-            # Windows wheels contain .dll file
-            if [ -f adbc_driver/adbc_driver_snowflake/adbc_driver_snowflake.dll ]; then
-              cp adbc_driver/adbc_driver_snowflake/adbc_driver_snowflake.dll package/snowflake/
-              echo "Copied Windows ADBC driver DLL"
-            else
-              # Fallback - some Windows builds might still use .so naming
-              if ls adbc_driver/adbc_driver_snowflake/*.so 1> /dev/null 2>&1; then
-                cp adbc_driver/adbc_driver_snowflake/*.so package/snowflake/
-                echo "Copied Windows ADBC driver SO (fallback)"
-              elif ls adbc_driver/adbc_driver_snowflake/*.dll 1> /dev/null 2>&1; then
-                cp adbc_driver/adbc_driver_snowflake/*.dll package/snowflake/
-                echo "Copied Windows ADBC driver DLL (fallback)"
-              else
-                echo "ERROR: No ADBC driver file found for Windows platform"
-                exit 1
-              fi
-            fi
-          else
-            if [ ! -f adbc_driver/adbc_driver_snowflake/libadbc_driver_snowflake.so ]; then
-              echo "ERROR: ADBC driver .so file not found: adbc_driver/adbc_driver_snowflake/libadbc_driver_snowflake.so"
-              exit 1
-            fi
-            cp adbc_driver/adbc_driver_snowflake/libadbc_driver_snowflake.so package/snowflake/
-            echo "Copied Unix ADBC driver SO"
+          # Copy ADBC driver (already normalized to the fixed name the
+          # extension searches for on every platform)
+          if [ ! -f adbc_driver/libadbc_driver_snowflake.so ]; then
+            echo "ERROR: ADBC driver not found: adbc_driver/libadbc_driver_snowflake.so"
+            exit 1
           fi
+          cp adbc_driver/libadbc_driver_snowflake.so package/snowflake/
+          echo "Copied ADBC driver"
           
           echo "Package contents before zipping:"
           ls -lah package/snowflake/
           
           # Create zip archive
           cd package
-          ZIP_FILE="../snowflake-extension-1.5.3-${{ matrix.platform.name }}.zip"
+          ZIP_FILE="../snowflake-extension-1.5.4-${{ matrix.platform.name }}.zip"
           if ! zip -r "$ZIP_FILE" snowflake/; then
             echo "ERROR: Failed to create zip archive"
             exit 1
@@ -147,14 +150,14 @@ jobs:
           
           # Display package info
           echo "Package contents:"
-          unzip -l snowflake-extension-1.5.3-${{ matrix.platform.name }}.zip
+          unzip -l snowflake-extension-1.5.4-${{ matrix.platform.name }}.zip
           echo ""
           echo "Package size:"
-          ls -lh snowflake-extension-1.5.3-${{ matrix.platform.name }}.zip
+          ls -lh snowflake-extension-1.5.4-${{ matrix.platform.name }}.zip
           
       - name: Validate package size
         run: |
-          PACKAGE_FILE="snowflake-extension-1.5.3-${{ matrix.platform.name }}.zip"
+          PACKAGE_FILE="snowflake-extension-1.5.4-${{ matrix.platform.name }}.zip"
           if [ ! -f "$PACKAGE_FILE" ]; then
             echo "ERROR: Package file not found: $PACKAGE_FILE"
             exit 1
@@ -176,8 +179,8 @@ jobs:
       - name: Upload complete package
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-extension-1.5.3-${{ matrix.platform.name }}
-          path: snowflake-extension-1.5.3-${{ matrix.platform.name }}.zip
+          name: snowflake-extension-1.5.4-${{ matrix.platform.name }}
+          path: snowflake-extension-1.5.4-${{ matrix.platform.name }}.zip
           retention-days: 30
           if-no-files-found: error
 
