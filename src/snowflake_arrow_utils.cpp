@@ -73,8 +73,14 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 			projection_cols.push_back(col);
 		}
 
-		// Call UpdatePushdownParameters to build modified query
-		factory->UpdatePushdownParameters(projection_cols, parameters.filters);
+		// Build the modified query. The snowflake_query() passthrough path wraps the
+		// user SQL as a subquery (projection only); the ATTACH path parses the table
+		// name out of the base query and rebuilds it.
+		if (factory->wrap_as_subquery) {
+			factory->UpdatePassthroughProjection(projection_cols);
+		} else {
+			factory->UpdatePushdownParameters(projection_cols, parameters.filters);
+		}
 	} else {
 		// No pushdown - use original query as-is (like main branch behavior)
 		DPRINT("Pushdown disabled, using original query: %s\n", factory->query.c_str());
@@ -230,14 +236,14 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 	//   * GEOGRAPHY/GEOMETRY: the driver tags columns geoarrow.wkb by peeking the
 	//     first data batch, so the tag is absent from the ExecuteSchema metadata.
 	//     A 1-row result lets the driver peek (a 0-row result cannot be peeked).
-	//   * Timestamps: ExecuteSchema mis-reports Snowflake TIMESTAMP units.
-	// Uses a temporary statement/stream released before returning so it does not
-	// disturb the factory's own statement used during scan production.
+	//   * Timestamps: ExecuteSchema mis-reports Snowflake TIMESTAMP units (issue #44).
 	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 1";
 
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));
 
+	// Use a temporary statement so we don't initialize/consume factory->statement,
+	// which the scan production path creates and uses on its own.
 	AdbcStatement probe_stmt;
 	std::memset(&probe_stmt, 0, sizeof(probe_stmt));
 	AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &probe_stmt, &error);
@@ -285,6 +291,7 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 	std::memset(&schema, 0, sizeof(schema));
 	int rc = probe_stream.get_schema ? probe_stream.get_schema(&probe_stream, &schema) : -1;
 
+	// Release the probe stream and statement; the caller only needs the schema.
 	if (probe_stream.release) {
 		probe_stream.release(&probe_stream);
 	}
@@ -406,6 +413,30 @@ void SnowflakeArrowStreamFactory::UpdatePushdownParameters(const vector<string> 
 		DPRINT("Pushdown failed: %s, using original query\n", e.what());
 		modified_query = query;
 	}
+}
+
+void SnowflakeArrowStreamFactory::UpdatePassthroughProjection(const vector<string> &projection) {
+	projection_columns = projection;
+
+	// No projection requested (e.g. SELECT *): run the user query unchanged.
+	if (projection.empty()) {
+		modified_query = query;
+		return;
+	}
+
+	// Select exactly the requested columns, in the requested order, from the user
+	// query wrapped as a derived table. The names come from the result schema, so
+	// quoting the exact name round-trips for both folded-uppercase and
+	// case-sensitive columns.
+	string cols;
+	for (size_t i = 0; i < projection.size(); i++) {
+		if (i > 0) {
+			cols += ", ";
+		}
+		cols += snowflake::QuoteSnowflakeIdentifier(projection[i]);
+	}
+	modified_query = "SELECT " + cols + " FROM (" + query + ") AS __sf_passthrough";
+	DPRINT("Passthrough projection applied:\n  Original: %s\n  Modified: %s\n", query.c_str(), modified_query.c_str());
 }
 
 } // namespace duckdb

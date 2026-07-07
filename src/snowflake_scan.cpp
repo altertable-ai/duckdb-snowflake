@@ -53,15 +53,38 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 	// This allows us to use DuckDB's native Arrow scan implementation
 	auto bind_data = make_uniq<SnowflakeScanBindData>(std::move(factory));
 
-	// Disable pushdown for snowflake_scan - user controls the query explicitly
+	// Filters stay client-side: the user controls the query, so we never rewrite
+	// its WHERE clause.
 	bind_data->factory->filter_pushdown_enabled = false;
-	bind_data->factory->projection_pushdown_enabled = false;
 
-	// Execute the full query now and cache the stream. This is necessary because
-	// SnowflakeGetArrowSchema (ExecuteSchema) leaves the ADBC driver in a state
-	// where a second statement cannot be created on the same connection, causing
-	// a segfault (SIGSEGV) when SnowflakeProduceArrowScan runs.
-	SnowflakeExecuteAndCacheStream(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+	// Determine whether the passthrough query is a row-returning SELECT (projectable)
+	// or a DDL/DML statement (CREATE/INSERT/...), which returns a status result and
+	// is never column-pruned.
+	auto trimmed = query;
+	StringUtil::LTrim(trimmed);
+	auto upper = StringUtil::Upper(trimmed);
+	bool is_select = StringUtil::StartsWith(upper, "SELECT") || StringUtil::StartsWith(upper, "WITH") ||
+	                 StringUtil::StartsWith(upper, "(");
+
+	if (is_select) {
+		// SELECT path: DuckDB's Arrow scanner prunes columns and reads the produced
+		// stream POSITIONALLY (child[k] == k-th projected column). Returning the full
+		// result regardless of projection caused wrong-column reads / SIGSEGV (#32).
+		// So enable projection pushdown and let SnowflakeProduceArrowScan wrap the
+		// query as a projected subquery. Fetch the schema cheaply with LIMIT 0
+		// (data-path schema) rather than caching the full result.
+		bind_data->factory->projection_pushdown_enabled = true;
+		bind_data->factory->wrap_as_subquery = true;
+		bind_data->projection_pushdown_enabled = true;
+		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+	} else {
+		// DDL/DML path: execute now and cache the stream. ExecuteSchema would leave
+		// the ADBC driver unable to create a second statement (SIGSEGV at produce),
+		// and a status result has no projection to honor.
+		bind_data->factory->projection_pushdown_enabled = false;
+		bind_data->projection_pushdown_enabled = false;
+		SnowflakeExecuteAndCacheStream(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+	}
 
 	// Use DuckDB's Arrow integration to populate the table type information
 	// This converts Arrow schema to DuckDB types and handles all type mappings
@@ -87,11 +110,12 @@ TableFunction GetSnowflakeScanFunction() {
 	                              ArrowTableFunction::ArrowScanInitGlobal, // Use DuckDB's init
 	                              ArrowTableFunction::ArrowScanInitLocal); // Use DuckDB's init
 
-	// Enable projection pushdown so DuckDB's Arrow scanner can prune columns locally.
-	// This is required in DuckDB v1.5+ where the Arrow scanner expects projection_pushdown=true
-	// to correctly track column IDs during ArrowToDuckDB conversion.
-	// Note: this only allows DuckDB to select columns from the Arrow batch locally —
-	// it does NOT rewrite the SQL sent to Snowflake (factory->projection_pushdown_enabled stays false).
+	// Enable projection pushdown so DuckDB's Arrow scanner prunes columns. This is
+	// required in DuckDB v1.5+ where the Arrow scanner reads the produced stream
+	// positionally (child[k] == k-th projected column). SnowflakeScanBind decides
+	// per query how to honor that: a SELECT is wrapped as a projected subquery so
+	// the produced stream's columns match the projection exactly (issue #32), while
+	// DDL/DML keeps the full cached stream (it is never column-pruned).
 	snowflake_query.projection_pushdown = true;
 	snowflake_query.filter_pushdown = false;
 

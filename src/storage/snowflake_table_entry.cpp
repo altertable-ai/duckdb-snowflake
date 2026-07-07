@@ -71,7 +71,7 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 		std::lock_guard<std::mutex> lock(bind_mutex);
 
 		// Populate bind_data->schema_root either from cache (no Snowflake roundtrip)
-		// or by issuing the SnowflakeGetArrowSchema call and seeding the cache.
+		// or by issuing the schema-probe query and seeding the cache.
 		if (cached_schema_root && cached_schema_root->arrow_schema.release) {
 			DPRINT("SnowflakeTableEntry: Reusing cached Arrow schema (no SF roundtrip)\n");
 			CloneCachedSchema(cached_schema_root->arrow_schema, snowflake_bind_data->schema_root.arrow_schema);
@@ -79,8 +79,8 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 			DPRINT("SnowflakeTableEntry: About to call SnowflakeGetArrowSchemaViaQuery\n");
 			// Use a 1-row query execution for the bind schema (data-path) so the
 			// driver's geoarrow.wkb tags (applied by peeking the first batch) and
-			// correct Snowflake TIMESTAMP units reach DuckDB. ExecuteSchema metadata
-			// carries neither.
+			// correct Snowflake TIMESTAMP units (issue #44) reach DuckDB.
+			// ExecuteSchema metadata carries neither.
 			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->factory.get(),
 			                                snowflake_bind_data->schema_root.arrow_schema);
 			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchemaViaQuery completed\n");

@@ -15,7 +15,9 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/storage/storage_extension.hpp"
+#include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "snowflake_secret_provider.hpp"
+#include "snowflake_query_builder.hpp"
 
 namespace duckdb {
 
@@ -29,6 +31,19 @@ inline void SnowflakeVersionScalarFun(DataChunk &args, ExpressionState &state, V
 	result.SetValue(0, val);
 }
 
+//! Test-only: exposes SnowflakeQueryBuilder::BuildQuery as a scalar so
+//! query_builder.test can assert Snowflake-correct identifier quoting on the
+//! rendered SQL without needing a Snowflake table with lowercase columns.
+inline void SnowflakeRenderPushdownQueryFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
+	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    [&](string_t table, string_t projection_csv, string_t filter_eq_column) {
+		    auto rendered = snowflake::RenderPushdownQueryForTest(table.GetString(), projection_csv.GetString(),
+		                                                          filter_eq_column.GetString());
+		    return StringVector::AddString(result, rendered);
+	    });
+}
+
 // Compatibility layer for different DuckDB versions
 static void LoadInternal(ExtensionLoader &loader) {
 	// Register the custom Snowflake secret type
@@ -38,6 +53,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto snowflake_version_function =
 	    ScalarFunction("snowflake_version", {}, LogicalType::VARCHAR, SnowflakeVersionScalarFun);
 	loader.RegisterFunction(std::move(snowflake_version_function));
+
+	// Test-only: render the SQL that pushdown would emit for a given table +
+	// projection + (optional) single equality filter. Used by query_builder.test.
+	auto snowflake_render_pushdown_query_function = ScalarFunction(
+	    "snowflake_render_pushdown_query", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	    LogicalType::VARCHAR, SnowflakeRenderPushdownQueryFun);
+	loader.RegisterFunction(std::move(snowflake_render_pushdown_query_function));
 
 #ifdef ADBC_AVAILABLE
 	// Register snowflake_scan table function (only available when ADBC is

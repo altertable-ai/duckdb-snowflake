@@ -11,6 +11,7 @@
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
+#include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/optional_filter.hpp"
 #include "duckdb/planner/filter/in_filter.hpp"
 #include "duckdb/planner/filter/dynamic_filter.hpp"
@@ -115,10 +116,39 @@ string SnowflakeQueryBuilder::BuildQuery(const string &table_name, const vector<
 	// case-insensitively), so we can't trust it to produce a Snowflake-valid
 	// FROM clause. Build the FROM clause manually with Snowflake-correct
 	// quoting and substitute it into the AST output via a placeholder that
-	// DuckDB will not rewrite.
+	// DuckDB will not rewrite. Column identifiers (projection list + filter
+	// column refs) have the same problem; we route them through per-column
+	// placeholders that get substituted with QuoteSnowflakeIdentifier output
+	// after ToString().
 	auto split_parts = SplitDottedIdentifier(table_name);
 	if (split_parts.empty() || (split_parts.size() == 1 && split_parts[0].empty())) {
 		throw InvalidInputException("Invalid table name format: %s", table_name);
+	}
+
+	// Build a placeholder for every column name we will reference. Placeholders
+	// are uppercase/underscores so DuckDB's serializer leaves them alone, and
+	// distinct enough that StringUtil::Replace won't collide.
+	std::map<string, string> col_to_placeholder;
+	auto placeholder_for = [&](const string &name) -> string {
+		auto it = col_to_placeholder.find(name);
+		if (it != col_to_placeholder.end()) {
+			return it->second;
+		}
+		string ph = StringUtil::Format("__SF_COL_%llu__", (uint64_t)col_to_placeholder.size());
+		col_to_placeholder[name] = ph;
+		return ph;
+	};
+
+	vector<string> projection_placeholders;
+	projection_placeholders.reserve(projection_columns.size());
+	for (const auto &c : projection_columns) {
+		projection_placeholders.push_back(placeholder_for(c));
+	}
+
+	vector<string> column_name_placeholders;
+	column_name_placeholders.reserve(column_names.size());
+	for (const auto &c : column_names) {
+		column_name_placeholders.push_back(placeholder_for(c));
 	}
 
 	// Create a SelectStatement AST
@@ -133,15 +163,15 @@ string SnowflakeQueryBuilder::BuildQuery(const string &table_name, const vector<
 	table_ref->table_name = from_placeholder;
 	select_node->from_table = std::move(table_ref);
 
-	// 2. Build the SELECT clause (projection list)
-	auto projection_list = BuildProjectionList(projection_columns);
+	// 2. Build the SELECT clause (projection list) with placeholder column names
+	auto projection_list = BuildProjectionList(projection_placeholders);
 	if (!projection_list.empty()) {
 		select_node->select_list = std::move(projection_list);
 	}
 	// If empty, SelectNode defaults to SELECT *
 
-	// 3. Build the WHERE clause (filters)
-	auto where_expr = BuildWhereExpression(filter_set, column_names);
+	// 3. Build the WHERE clause (filters) with placeholder column names
+	auto where_expr = BuildWhereExpression(filter_set, column_name_placeholders);
 	if (where_expr) {
 		select_node->where_clause = std::move(where_expr);
 	}
@@ -153,6 +183,11 @@ string SnowflakeQueryBuilder::BuildQuery(const string &table_name, const vector<
 	string sql = select_stmt->ToString();
 	const string sf_from = RequoteDottedIdentifier(table_name);
 	sql = StringUtil::Replace(sql, from_placeholder, sf_from);
+
+	// 6. Replace each column placeholder with its Snowflake-quoted form
+	for (const auto &kv : col_to_placeholder) {
+		sql = StringUtil::Replace(sql, kv.second, QuoteSnowflakeIdentifier(kv.first));
+	}
 	return sql;
 }
 
@@ -418,6 +453,44 @@ SnowflakeQueryBuilder::BuildProjectionList(const vector<string> &projection_colu
 	}
 
 	return result;
+}
+
+string RenderPushdownQueryForTest(const string &table_name, const string &projection_csv,
+                                  const string &filter_eq_column) {
+	vector<string> projection_columns;
+	if (!projection_csv.empty()) {
+		auto parts = StringUtil::Split(projection_csv, ",");
+		for (auto &part : parts) {
+			StringUtil::Trim(part);
+			if (!part.empty()) {
+				projection_columns.push_back(part);
+			}
+		}
+	}
+
+	TableFilterSet filter_set;
+	TableFilterSet *filter_ptr = nullptr;
+	if (!filter_eq_column.empty()) {
+		if (projection_columns.empty()) {
+			throw InvalidInputException(
+			    "RenderPushdownQueryForTest: filter_eq_column requires a non-empty projection_csv");
+		}
+		idx_t found = projection_columns.size();
+		for (idx_t i = 0; i < projection_columns.size(); ++i) {
+			if (projection_columns[i] == filter_eq_column) {
+				found = i;
+				break;
+			}
+		}
+		if (found == projection_columns.size()) {
+			throw InvalidInputException("RenderPushdownQueryForTest: filter_eq_column '%s' not in projection list",
+			                            filter_eq_column);
+		}
+		filter_set.filters[found] = make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL, Value("test_value"));
+		filter_ptr = &filter_set;
+	}
+
+	return SnowflakeQueryBuilder::BuildQuery(table_name, projection_columns, filter_ptr, projection_columns);
 }
 
 } // namespace snowflake
