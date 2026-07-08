@@ -44,16 +44,15 @@ struct SnowflakeTableBindData : public FunctionData {
 //! SnowflakeTableEntry represents a single table in Snowflake
 class SnowflakeTableEntry : public TableCatalogEntry {
 public:
-	SnowflakeTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
-	                    shared_ptr<SnowflakeClient> client)
-	    : TableCatalogEntry(catalog, schema, info), client(std::move(client)) {};
+	SnowflakeTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info, SnowflakeConfig config)
+	    : TableCatalogEntry(catalog, schema, info), config(std::move(config)) {};
 
 	string GetFullyQualifiedName() const {
 		return catalog.GetName() + "." + schema.name + "." + name;
 	}
 
 	const SnowflakeConfig &GetConfig() const {
-		return client->GetConfig();
+		return config;
 	}
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -63,7 +62,7 @@ public:
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 
 private:
-	shared_ptr<SnowflakeClient> client;
+	SnowflakeConfig config;
 	//! Serializes access to the schema cache and the lazy columns load below.
 	//! DuckDB shares catalog table entries across connections; concurrent
 	//! GetScanFunction calls on the same entry would otherwise race on the

@@ -26,21 +26,21 @@ static void CloneCachedSchema(ArrowSchema &src, ArrowSchema &dst) {
 }
 
 TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
-	DPRINT("SnowflakeTableEntry::GetScanFunction called for table %s.%s.%s\n", client->GetConfig().database.c_str(),
+	DPRINT("SnowflakeTableEntry::GetScanFunction called for table %s.%s.%s\n", GetConfig().database.c_str(),
 	       schema.name.c_str(), name.c_str());
 
-	auto &config = client->GetConfig();
+	auto &config = GetConfig();
 	string query = "SELECT * FROM " + QuoteSnowflakeIdentifier(config.database) + "." +
 	               QuoteSnowflakeIdentifier(schema.name) + "." + QuoteSnowflakeIdentifier(name);
 	DPRINT("SnowflakeTableEntry: Query = '%s'\n", query.c_str());
 
-	// TODO consider maintaining a thread-safe pool of connections in client, so
-	// we can use the client within SnowflakeTableEntry instead of creating a new
-	// client
+	// Lease a dedicated connection from the pool for this scan; it is owned by the
+	// factory and returned to the pool when the bound query is torn down. This is
+	// what keeps concurrent scans from sharing one non-thread-safe ADBC connection.
 	auto &client_manager = SnowflakeClientManager::GetInstance();
-	auto connection = client_manager.GetConnection(config);
+	auto lease = client_manager.Acquire(config);
 
-	auto factory = make_uniq<SnowflakeArrowStreamFactory>(connection, query);
+	auto factory = make_uniq<SnowflakeArrowStreamFactory>(std::move(lease), query);
 	DPRINT("SnowflakeTableEntry: Created factory at %p\n", (void *)factory.get());
 
 	// Apply pushdown settings from catalog options

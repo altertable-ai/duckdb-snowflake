@@ -8,10 +8,12 @@ namespace snowflake {
 
 SnowflakeCatalog::SnowflakeCatalog(AttachedDatabase &db_p, const SnowflakeConfig &config,
                                    const SnowflakeOptions &options_p)
-    : Catalog(db_p), client(SnowflakeClientManager::GetInstance().GetConnection(config)), schemas(*this, client),
-      options(options_p) {
+    : Catalog(db_p), config(config), schemas(*this, config), options(options_p) {
 	DPRINT("SnowflakeCatalog constructor called\n");
-	if (!client || !client->IsConnected()) {
+	// Validate connectivity at ATTACH time. The validated connection is returned
+	// to the pool for reuse when this lease goes out of scope.
+	auto lease = SnowflakeClientManager::GetInstance().Acquire(config);
+	if (!lease || !lease->IsConnected()) {
 		throw ConnectionException("Failed to connect to Snowflake");
 	}
 	DPRINT("SnowflakeCatalog connected successfully with enable_pushdown=%s\n",
@@ -19,10 +21,9 @@ SnowflakeCatalog::SnowflakeCatalog(AttachedDatabase &db_p, const SnowflakeConfig
 }
 
 SnowflakeCatalog::~SnowflakeCatalog() {
-	// TODO consider adding option to allow connections to persist if user wants
-	// to DETACH and ATTACH multiple times
-	auto &client_manager = SnowflakeClientManager::GetInstance();
-	client_manager.ReleaseConnection(client->GetConfig());
+	// Close idle pooled connections for this config on DETACH. Scans still in
+	// flight keep their own leased connection alive until they finish.
+	SnowflakeClientManager::GetInstance().DrainIdle(config);
 }
 
 void SnowflakeCatalog::Initialize(bool load_builtin) {
@@ -48,7 +49,7 @@ optional_ptr<SchemaCatalogEntry> SnowflakeCatalog::LookupSchema(CatalogTransacti
 	// With ATTACH, the database is fixed by the secret; queries must be
 	// catalog.schema.table.
 	if (schema_name.find('.') != string::npos) {
-		const auto &attached_db = client->GetConfig().database;
+		const auto &attached_db = config.database;
 		const auto &alias = GetName();
 		throw BinderException("Invalid path: you are trying to reference '%s' while a database is "
 		                      "already attached (\"%s\").\n"
@@ -63,7 +64,7 @@ optional_ptr<SchemaCatalogEntry> SnowflakeCatalog::LookupSchema(CatalogTransacti
 
 	auto found_entry = schemas.GetEntry(transaction.GetContext(), schema_name);
 	if (!found_entry && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-		const auto &attached_db = client->GetConfig().database;
+		const auto &attached_db = config.database;
 		throw BinderException("Schema '%s' not found in attached database '%s'. To query a different "
 		                      "database, create a separate ATTACH or use snowflake_query().",
 		                      schema_name.c_str(), attached_db.c_str());
@@ -89,7 +90,6 @@ bool SnowflakeCatalog::InMemory() {
 
 string SnowflakeCatalog::GetDBPath() {
 	// Return a descriptive path for the Snowflake database
-	const auto &config = client->GetConfig();
 	return config.account + "." + config.database;
 }
 

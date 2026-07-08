@@ -15,7 +15,7 @@ class SnowflakeTableSet;
 class SnowflakeSchemaEntry : public SchemaCatalogEntry {
 public:
 	SnowflakeSchemaEntry(Catalog &catalog, const string &schema_name, CreateSchemaInfo &info,
-	                     const shared_ptr<SnowflakeClient> &client);
+	                     const SnowflakeConfig &config);
 
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
 
@@ -54,7 +54,7 @@ public:
 	bool CatalogTypeIsSupported(CatalogType type);
 
 private:
-	shared_ptr<SnowflakeClient> client;
+	SnowflakeConfig config;
 	unique_ptr<SnowflakeTableSet> tables;
 };
 } // namespace snowflake

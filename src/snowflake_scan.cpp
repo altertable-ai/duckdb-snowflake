@@ -37,17 +37,17 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 	// Get client manager
 	auto &client_manager = SnowflakeClientManager::GetInstance();
 
-	shared_ptr<SnowflakeClient> connection;
+	ConnectionLease lease;
 	try {
-		connection = client_manager.GetConnection(config);
+		lease = client_manager.Acquire(config);
 	} catch (const std::exception &e) {
 		throw BinderException("Unexpected error connecting to Snowflake with profile '%s': %s", profile.c_str(),
 		                      e.what());
 	}
 
-	// Create the factory that will manage the ADBC connection and statement
-	// This factory will be kept alive throughout the scan operation
-	auto factory = make_uniq<SnowflakeArrowStreamFactory>(connection, query);
+	// Create the factory that will manage the ADBC connection and statement.
+	// The factory owns the leased connection for the whole scan operation.
+	auto factory = make_uniq<SnowflakeArrowStreamFactory>(std::move(lease), query);
 
 	// Create the bind data that inherits from ArrowScanFunctionData
 	// This allows us to use DuckDB's native Arrow scan implementation
