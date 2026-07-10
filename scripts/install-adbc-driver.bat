@@ -31,7 +31,7 @@ if "%ARCH%"=="AMD64" (
     set ASSET_NAME=snowflake_windows_amd64_v%DRIVER_VERSION%.tar.gz
 ) else (
     echo %ERROR% Unsupported architecture: %ARCH%
-    echo Only Windows x86_64 (AMD64) and ARM64 (via x86_64 emulation) are supported
+    echo Only Windows x86_64 AMD64 and ARM64 via x86_64 emulation are supported
     exit /b 1
 )
 
