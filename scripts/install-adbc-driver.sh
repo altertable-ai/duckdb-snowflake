@@ -7,9 +7,13 @@
 set -e
 
 # Configuration
-ADBC_VERSION="apache-arrow-adbc-20"
-DRIVER_VERSION="1.8.0"
-BASE_URL="https://github.com/apache/arrow-adbc/releases/download/${ADBC_VERSION}"
+# The Snowflake driver was split out of apache/arrow-adbc into its own repo
+# (adbc-drivers/snowflake) with an independent release line (go/vX.Y.Z). The
+# apache/arrow-adbc wheels are deprecated and lack GeoArrow GEOGRAPHY/GEOMETRY
+# support, which shipped in go/v1.11.0.
+DRIVER_VERSION="1.11.0"
+RELEASE_TAG="go/v${DRIVER_VERSION}"
+BASE_URL="https://github.com/adbc-drivers/snowflake/releases/download/${RELEASE_TAG}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,10 +47,12 @@ detect_platform() {
     case "$OS" in
         Linux)
             if [ "$ARCH" = "x86_64" ]; then
-                WHEEL_NAME="adbc_driver_snowflake-${DRIVER_VERSION}-py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl"
+                ASSET_NAME="snowflake_linux_amd64_v${DRIVER_VERSION}.tar.gz"
+                LIB_IN_TARBALL="libadbc_driver_snowflake.so"
                 PLATFORM="linux_amd64"
             elif [ "$ARCH" = "aarch64" ]; then
-                WHEEL_NAME="adbc_driver_snowflake-${DRIVER_VERSION}-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+                ASSET_NAME="snowflake_linux_arm64_v${DRIVER_VERSION}.tar.gz"
+                LIB_IN_TARBALL="libadbc_driver_snowflake.so"
                 PLATFORM="linux_arm64"
             else
                 print_error "Unsupported Linux architecture: $ARCH"
@@ -54,19 +60,21 @@ detect_platform() {
             fi
             ;;
         Darwin)
-            if [ "$ARCH" = "x86_64" ]; then
-                WHEEL_NAME="adbc_driver_snowflake-${DRIVER_VERSION}-py3-none-macosx_10_15_x86_64.whl"
-                PLATFORM="osx_amd64"
-            elif [ "$ARCH" = "arm64" ]; then
-                WHEEL_NAME="adbc_driver_snowflake-${DRIVER_VERSION}-py3-none-macosx_11_0_arm64.whl"
+            if [ "$ARCH" = "arm64" ]; then
+                ASSET_NAME="snowflake_macos_arm64_v${DRIVER_VERSION}.tar.gz"
+                LIB_IN_TARBALL="libadbc_driver_snowflake.dylib"
                 PLATFORM="osx_arm64"
             else
                 print_error "Unsupported macOS architecture: $ARCH"
+                echo "The ADBC Driver Foundry ships no macOS x86_64 (Intel) build."
+                echo "Build the driver from source (https://github.com/adbc-drivers/snowflake)"
+                echo "and set SNOWFLAKE_ADBC_DRIVER_PATH to the result."
                 exit 1
             fi
             ;;
         MINGW*|CYGWIN*|MSYS*|Windows*)
-            WHEEL_NAME="adbc_driver_snowflake-${DRIVER_VERSION}-py3-none-win_amd64.whl"
+            ASSET_NAME="snowflake_windows_amd64_v${DRIVER_VERSION}.tar.gz"
+            LIB_IN_TARBALL="libadbc_driver_snowflake.dll"
             PLATFORM="windows_amd64"
             ;;
         *)
@@ -139,35 +147,25 @@ check_dependencies() {
         exit 1
     fi
 
-    # Check for unzip
-    if ! command -v unzip >/dev/null 2>&1; then
-        print_error "unzip is required but not installed."
-        print_info "Install it with:"
-        case "$OS" in
-            Linux)
-                echo "  sudo apt-get install unzip  # Debian/Ubuntu"
-                echo "  sudo yum install unzip      # RHEL/CentOS"
-                ;;
-            Darwin)
-                echo "  brew install unzip"
-                ;;
-        esac
+    # Check for tar (foundry releases are tarballs)
+    if ! command -v tar >/dev/null 2>&1; then
+        print_error "tar is required but not installed."
         exit 1
     fi
 }
 
-# Download the wheel file
+# Download the release tarball
 download_driver() {
-    WHEEL_URL="${BASE_URL}/${WHEEL_NAME}"
-    WHEEL_PATH="${INSTALL_DIR}/${WHEEL_NAME}"
+    ASSET_URL="${BASE_URL}/${ASSET_NAME}"
+    ASSET_PATH="${INSTALL_DIR}/${ASSET_NAME}"
 
-    if [ -f "${WHEEL_PATH}" ]; then
-        print_warning "Driver wheel already exists, checking if extraction is needed..."
+    if [ -f "${ASSET_PATH}" ]; then
+        print_warning "Driver tarball already exists, checking if extraction is needed..."
     else
         print_info "Downloading ADBC Snowflake driver..."
-        print_info "URL: ${WHEEL_URL}"
+        print_info "URL: ${ASSET_URL}"
 
-        $DOWNLOAD_CMD "${WHEEL_PATH}" "${WHEEL_URL}"
+        $DOWNLOAD_CMD "${ASSET_PATH}" "${ASSET_URL}"
 
         if [ $? -ne 0 ]; then
             print_error "Failed to download ADBC driver"
@@ -175,42 +173,39 @@ download_driver() {
             exit 1
         fi
 
-        print_success "Downloaded ${WHEEL_NAME}"
+        print_success "Downloaded ${ASSET_NAME}"
     fi
 }
 
 # Global variable for driver filename
 DRIVER_FILE=""
 
-# Extract the driver from wheel
+# Extract the driver from the tarball
 extract_driver() {
     print_info "Extracting driver library..."
 
     cd "${INSTALL_DIR}"
 
-    # Extract the shared library from the wheel
-    unzip -o "${WHEEL_NAME}" "adbc_driver_snowflake/libadbc_driver_snowflake.so" 2>/dev/null || {
-        # Try alternative path for Windows
-        unzip -o "${WHEEL_NAME}" "adbc_driver_snowflake/adbc_driver_snowflake.dll" 2>/dev/null || {
-            print_error "Failed to extract driver library from wheel"
-            exit 1
-        }
-    }
+    tar xzf "${ASSET_NAME}" "${LIB_IN_TARBALL}" 2>/dev/null || tar xzf "${ASSET_NAME}" 2>/dev/null
 
-    # Move the library to the install directory
-    if [ -f "adbc_driver_snowflake/libadbc_driver_snowflake.so" ]; then
-        mv -f "adbc_driver_snowflake/libadbc_driver_snowflake.so" .
-        DRIVER_FILE="libadbc_driver_snowflake.so"
-    elif [ -f "adbc_driver_snowflake/adbc_driver_snowflake.dll" ]; then
-        mv -f "adbc_driver_snowflake/adbc_driver_snowflake.dll" .
-        DRIVER_FILE="adbc_driver_snowflake.dll"
-    else
-        print_error "Driver library not found in wheel"
-        exit 1
+    if [ ! -f "${LIB_IN_TARBALL}" ]; then
+        # Some tarballs nest the lib; find it.
+        FOUND="$(find . -name "${LIB_IN_TARBALL}" -type f | head -1)"
+        if [ -n "$FOUND" ]; then
+            mv -f "$FOUND" "${LIB_IN_TARBALL}"
+        else
+            print_error "Failed to find ${LIB_IN_TARBALL} in ${ASSET_NAME}"
+            exit 1
+        fi
     fi
 
-    # Clean up
-    rmdir "adbc_driver_snowflake" 2>/dev/null || true
+    # The extension resolves the driver by the fixed name
+    # libadbc_driver_snowflake.so on every platform (see CMakeLists.txt), so
+    # normalize the macOS .dylib / Windows .dll to that name.
+    DRIVER_FILE="libadbc_driver_snowflake.so"
+    if [ "${LIB_IN_TARBALL}" != "${DRIVER_FILE}" ]; then
+        mv -f "${LIB_IN_TARBALL}" "${DRIVER_FILE}"
+    fi
 
     # Make the library executable (important for some platforms)
     chmod +x "${DRIVER_FILE}" 2>/dev/null || true

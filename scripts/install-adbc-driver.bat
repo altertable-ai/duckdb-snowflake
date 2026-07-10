@@ -5,9 +5,11 @@ REM Usage: install-adbc-driver.bat
 setlocal enabledelayedexpansion
 
 REM Configuration
-set ADBC_VERSION=apache-arrow-adbc-20
-set DRIVER_VERSION=1.8.0
-set BASE_URL=https://github.com/apache/arrow-adbc/releases/download/%ADBC_VERSION%
+REM The Snowflake driver moved from apache/arrow-adbc to adbc-drivers/snowflake
+REM (release line go/vX.Y.Z). The old wheels are deprecated and lack GeoArrow
+REM GEOGRAPHY/GEOMETRY support.
+set DRIVER_VERSION=1.11.0
+set BASE_URL=https://github.com/adbc-drivers/snowflake/releases/download/go/v%DRIVER_VERSION%
 
 REM Colors for output (if supported)
 set INFO=[INFO]
@@ -19,24 +21,17 @@ REM Detect platform architecture
 set ARCH=%PROCESSOR_ARCHITECTURE%
 if "%ARCH%"=="AMD64" (
     set PLATFORM=windows_amd64
-    set WHEEL_NAME=adbc_driver_snowflake-%DRIVER_VERSION%-py3-none-win_amd64.whl
+    set ASSET_NAME=snowflake_windows_amd64_v%DRIVER_VERSION%.tar.gz
 ) else if "%ARCH%"=="ARM64" (
-    echo %ERROR% Windows ARM64 is not supported by Apache ADBC Snowflake driver
-    echo.
-    echo The ADBC Snowflake driver only provides pre-built binaries for:
-    echo   - Windows x86_64 (AMD64)
-    echo   - Linux x86_64 and ARM64
-    echo   - macOS x86_64 and ARM64
-    echo.
-    echo To use DuckDB Snowflake on Windows ARM64, you would need to:
-    echo   1. Build the ADBC driver from source
-    echo   2. Request Windows ARM64 support from Apache Arrow team
-    echo   3. Use Windows x86_64 emulation (performance may be affected)
-    echo.
-    exit /b 1
+    REM No native ARM64 driver exists; install the x86_64 build for WoW64/emulation.
+    REM This matches install-adbc-driver.sh, which always targets windows_amd64 on Windows.
+    echo %WARNING% Windows ARM64 detected; installing x86_64 driver via emulation
+    echo %WARNING% Performance may be reduced compared to a native ARM64 build
+    set PLATFORM=windows_amd64
+    set ASSET_NAME=snowflake_windows_amd64_v%DRIVER_VERSION%.tar.gz
 ) else (
     echo %ERROR% Unsupported architecture: %ARCH%
-    echo Only Windows x86_64 (AMD64) is supported
+    echo Only Windows x86_64 AMD64 and ARM64 via x86_64 emulation are supported
     exit /b 1
 )
 
@@ -46,23 +41,55 @@ echo      DuckDB Snowflake ADBC Driver Installer
 
 REM Detect DuckDB version
 echo %INFO% Detecting DuckDB version...
-for /f "tokens=*" %%i in ('duckdb -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
 
-REM Extract version from output (format: "v1.4.2")
-for /f "tokens=*" %%v in ("%DUCKDB_OUTPUT%") do (
-    set VERSION_LINE=%%v
+set "DUCKDB_BIN="
+if defined DUCKDB_CMD (
+    set "DUCKDB_BIN=%DUCKDB_CMD%"
+) else if exist "%CD%\duckdb.exe" (
+    set "DUCKDB_BIN=%CD%\duckdb.exe"
+) else if exist "%~dp0..\duckdb.exe" (
+    set "DUCKDB_BIN=%~dp0..\duckdb.exe"
+) else if exist "%~dp0duckdb.exe" (
+    set "DUCKDB_BIN=%~dp0duckdb.exe"
+) else if exist "%USERPROFILE%\duckdb-cli\duckdb.exe" (
+    set "DUCKDB_BIN=%USERPROFILE%\duckdb-cli\duckdb.exe"
+) else (
+    for /f "delims=" %%I in ('where duckdb.exe 2^>nul') do set "DUCKDB_BIN=%%I"
 )
 
+if not defined DUCKDB_BIN (
+    set "DUCKDB_CMD=duckdb"
+) else (
+    set "DUCKDB_CMD=%DUCKDB_BIN%"
+)
+
+echo %INFO% Using DuckDB binary: %DUCKDB_CMD%
+
+set DUCKDB_OUTPUT=
+for /f "tokens=1" %%i in ('"%DUCKDB_CMD%" -version 2^>nul') do set DUCKDB_OUTPUT=%%i
+
+if not defined DUCKDB_OUTPUT (
+    echo %WARNING% No output from DuckDB - trying fallback SQL invocation...
+    for /f "tokens=1" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
+)
+
+if not defined DUCKDB_OUTPUT (
+    echo %ERROR% Could not detect DuckDB version. Is DuckDB installed?
+    echo Please install DuckDB from https://duckdb.org/docs/installation/
+    exit /b 1
+)
+
+echo %INFO% DuckDB version token: %DUCKDB_OUTPUT%
+
 REM Parse version - extract vX.Y.Z pattern
-echo %VERSION_LINE% | findstr /r "v[0-9]*\.[0-9]*\.[0-9]*" >nul
+echo %DUCKDB_OUTPUT% | findstr /r "v[0-9]*\.[0-9]*\.[0-9]*" >nul
 if errorlevel 1 (
     echo %ERROR% Could not detect DuckDB version. Is DuckDB installed?
     echo Please install DuckDB from https://duckdb.org/docs/installation/
     exit /b 1
 )
 
-REM Extract version using string manipulation
-for /f "tokens=2 delims= " %%a in ("%VERSION_LINE%") do set DUCKDB_VERSION=%%a
+set DUCKDB_VERSION=%DUCKDB_OUTPUT%
 
 echo      DuckDB Version: %DUCKDB_VERSION%
 echo ================================================================
@@ -76,7 +103,7 @@ if defined DUCKDB_EXTENSION_DIR (
     set INSTALL_DIR=%USERPROFILE%\.duckdb\extensions\%DUCKDB_VERSION%\%PLATFORM%
 )
 
-echo %INFO% Detected platform: Windows x86_64 (%PLATFORM%)
+echo %INFO% Detected platform: Windows (%PLATFORM%)
 echo %INFO% Installation directory: %INSTALL_DIR%
 
 REM Create directory if it doesn't exist
@@ -88,18 +115,18 @@ if not exist "%INSTALL_DIR%" (
     )
 )
 
-REM Download the wheel
-set WHEEL_PATH=%INSTALL_DIR%\%WHEEL_NAME%
-set WHEEL_URL=%BASE_URL%/%WHEEL_NAME%
+REM Download the release tarball
+set ASSET_PATH=%INSTALL_DIR%\%ASSET_NAME%
+set ASSET_URL=%BASE_URL%/%ASSET_NAME%
 
-if exist "%WHEEL_PATH%" (
-    echo %WARNING% Driver wheel already exists, checking if extraction is needed...
+if exist "%ASSET_PATH%" (
+    echo %WARNING% Driver tarball already exists, checking if extraction is needed...
 ) else (
     echo %INFO% Downloading ADBC Snowflake driver...
-    echo %INFO% URL: %WHEEL_URL%
+    echo %INFO% URL: %ASSET_URL%
 
     REM Try PowerShell download first
-    powershell -Command "& {Invoke-WebRequest -Uri '%WHEEL_URL%' -OutFile '%WHEEL_PATH%' -ErrorAction Stop}" 2>nul
+    powershell -Command "& {Invoke-WebRequest -Uri '%ASSET_URL%' -OutFile '%ASSET_PATH%' -ErrorAction Stop}" 2>nul
 
     if errorlevel 1 (
         echo %ERROR% Failed to download ADBC driver
@@ -107,29 +134,29 @@ if exist "%WHEEL_PATH%" (
         exit /b 1
     )
 
-    echo %SUCCESS% Downloaded %WHEEL_NAME%
+    echo %SUCCESS% Downloaded %ASSET_NAME%
 )
 
-REM Extract the driver from wheel
+REM Extract the driver from the tarball (tar.exe ships with Windows 10+)
 echo %INFO% Extracting driver library...
 
 cd /d "%INSTALL_DIR%"
 
-REM Extract using PowerShell (wheel files are zip files)
-powershell -Command "Expand-Archive -Path '%WHEEL_NAME%' -DestinationPath . -Force" 2>nul
+tar -xzf "%ASSET_NAME%" 2>nul
 
 if errorlevel 1 (
-    echo %ERROR% Failed to extract driver library from wheel
+    echo %ERROR% Failed to extract driver library from tarball
     exit /b 1
 )
 
-REM Move the library to the install directory (Windows uses .so extension too)
-if exist "adbc_driver_snowflake\libadbc_driver_snowflake.so" (
-    move /Y "adbc_driver_snowflake\libadbc_driver_snowflake.so" . >nul
-    rmdir /S /Q "adbc_driver_snowflake" 2>nul
+REM The extension resolves the driver by the fixed name
+REM libadbc_driver_snowflake.so on every platform (see CMakeLists.txt),
+REM so rename the .dll accordingly.
+if exist "libadbc_driver_snowflake.dll" (
+    move /Y "libadbc_driver_snowflake.dll" "libadbc_driver_snowflake.so" >nul
     echo %SUCCESS% Extracted libadbc_driver_snowflake.so
 ) else (
-    echo %ERROR% Driver library not found in wheel
+    echo %ERROR% Driver library not found in tarball
     exit /b 1
 )
 
