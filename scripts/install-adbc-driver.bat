@@ -66,7 +66,15 @@ if not defined DUCKDB_BIN (
 echo %INFO% Using DuckDB binary: %DUCKDB_CMD%
 
 set DUCKDB_OUTPUT=
-for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
+for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -version 2^>nul') do set DUCKDB_OUTPUT=%%i
+
+echo %INFO% DuckDB probe output: %DUCKDB_OUTPUT%
+
+if not defined DUCKDB_OUTPUT (
+    echo %WARNING% No output from DuckDB - trying fallback SQL invocation...
+    for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
+    echo %INFO% DuckDB fallback output: %DUCKDB_OUTPUT%
+)
 
 REM Extract version from output (format: "v1.4.2")
 for /f "tokens=*" %%v in ("%DUCKDB_OUTPUT%") do (
