@@ -41,7 +41,15 @@ echo      DuckDB Snowflake ADBC Driver Installer
 
 REM Detect DuckDB version
 echo %INFO% Detecting DuckDB version...
-for /f "tokens=*" %%i in ('duckdb -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
+
+if exist "%~dp0..\duckdb.exe" (
+    set DUCKDB_CMD=%~dp0..\duckdb.exe
+) else (
+    set DUCKDB_CMD=duckdb
+)
+
+set DUCKDB_OUTPUT=
+for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
 
 REM Extract version from output (format: "v1.4.2")
 for /f "tokens=*" %%v in ("%DUCKDB_OUTPUT%") do (
