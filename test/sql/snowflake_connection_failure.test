@@ -1,0 +1,42 @@
+# name: test/sql/snowflake_connection_failure.test
+# description: Connection refusal fails as a clean statement error, never a crash
+# group: [sql]
+
+# When Snowflake refuses a connection (bad account, exhausted capacity, auth
+# rejection), SnowflakeClientManager::Acquire() must surface a thrown DuckDB
+# exception — a normal statement error — and the session must stay usable.
+# Acquire() never blocks: it either returns a lease or throws (there are no
+# waiting primitives in the pool), so a refusal can't hang a query either.
+#
+# This test needs no Snowflake credentials: the account is intentionally
+# nonexistent, so the driver's login request fails fast (HTTP 404).
+
+require snowflake
+
+statement ok
+CREATE SECRET bad_sf (
+    TYPE snowflake,
+    ACCOUNT 'NONEXISTENT-ACCOUNT99999',
+    USER 'nobody',
+    PASSWORD 'wrong',
+    DATABASE 'X',
+    WAREHOUSE 'X'
+);
+
+# snowflake_query path: Acquire() throws -> BinderException with context
+statement error
+SELECT * FROM snowflake_query('SELECT 1', 'bad_sf');
+----
+<REGEX>:.*Unexpected error connecting to Snowflake.*
+
+# ATTACH path: connect failure surfaces as a statement-level IO error
+statement error
+ATTACH '' AS bad_db (TYPE SNOWFLAKE, SECRET bad_sf, READ_ONLY);
+----
+<REGEX>:.*Failed to initialize connection.*
+
+# The session survives both refusals — no crash, no poisoned state
+query I
+SELECT 42;
+----
+42
