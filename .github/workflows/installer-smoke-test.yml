@@ -66,7 +66,9 @@ jobs:
 
   windows-installer:
     name: install-adbc-driver.bat (windows)
-    runs-on: windows-latest
+    # windows-latest can schedule ARM64 hosts; the ADBC driver only ships
+    # windows_amd64 binaries, so pin to the x64 Server 2022 image.
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:
