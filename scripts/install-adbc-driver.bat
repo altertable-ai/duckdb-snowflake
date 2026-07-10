@@ -23,22 +23,15 @@ if "%ARCH%"=="AMD64" (
     set PLATFORM=windows_amd64
     set ASSET_NAME=snowflake_windows_amd64_v%DRIVER_VERSION%.tar.gz
 ) else if "%ARCH%"=="ARM64" (
-    echo %ERROR% Windows ARM64 is not supported by the ADBC Snowflake driver
-    echo.
-    echo The ADBC Driver Foundry only provides pre-built binaries for:
-    echo   - Windows x86_64 (AMD64)
-    echo   - Linux x86_64 and ARM64
-    echo   - macOS ARM64
-    echo.
-    echo To use DuckDB Snowflake on Windows ARM64, you would need to:
-    echo   1. Build the ADBC driver from source
-    echo   2. Request Windows ARM64 support from Apache Arrow team
-    echo   3. Use Windows x86_64 emulation (performance may be affected)
-    echo.
-    exit /b 1
+    REM No native ARM64 driver exists; install the x86_64 build for WoW64/emulation.
+    REM This matches install-adbc-driver.sh, which always targets windows_amd64 on Windows.
+    echo %WARNING% Windows ARM64 detected; installing x86_64 driver via emulation
+    echo %WARNING% Performance may be reduced compared to a native ARM64 build
+    set PLATFORM=windows_amd64
+    set ASSET_NAME=snowflake_windows_amd64_v%DRIVER_VERSION%.tar.gz
 ) else (
     echo %ERROR% Unsupported architecture: %ARCH%
-    echo Only Windows x86_64 (AMD64) is supported
+    echo Only Windows x86_64 (AMD64) and ARM64 (via x86_64 emulation) are supported
     exit /b 1
 )
 
@@ -78,7 +71,7 @@ if defined DUCKDB_EXTENSION_DIR (
     set INSTALL_DIR=%USERPROFILE%\.duckdb\extensions\%DUCKDB_VERSION%\%PLATFORM%
 )
 
-echo %INFO% Detected platform: Windows x86_64 (%PLATFORM%)
+echo %INFO% Detected platform: Windows (%PLATFORM%)
 echo %INFO% Installation directory: %INSTALL_DIR%
 
 REM Create directory if it doesn't exist
