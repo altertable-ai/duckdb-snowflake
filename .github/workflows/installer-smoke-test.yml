@@ -92,6 +92,8 @@ jobs:
 
       - name: Run installer
         shell: cmd
+        env:
+          DUCKDB_CMD: C:\Users\runneradmin\duckdb-cli\duckdb.exe
         run: scripts\install-adbc-driver.bat
 
       - name: Verify installed driver
