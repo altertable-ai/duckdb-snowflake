@@ -1,0 +1,56 @@
+# name: test/sql/snowflake_concurrent_scans.test
+# description: Concurrent scans each lease their own pooled connection (regression test for the shared-connection data race)
+# group: [sql]
+
+# Before the connection pool, every concurrent scan drove the same cached ADBC
+# connection; ADBC connections are not thread-safe, so this crashed
+# intermittently (SIGSEGV) under dbt-style workloads. Eight threads scanning
+# simultaneously exercise Acquire()/Return() under contention; each thread
+# must get its own connection and correct results.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_USERNAME
+
+require-env SNOWFLAKE_PRIVATE_KEY_FILE
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+CREATE SECRET sf_concurrent (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_USERNAME}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+statement ok
+ATTACH '' AS sf_pool (TYPE SNOWFLAKE, SECRET sf_concurrent, READ_ONLY);
+
+concurrentloop i 0 8
+
+query I
+SELECT count(N_NATIONKEY) FROM sf_pool.TPCH_SF1.NATION;
+----
+25
+
+query I
+SELECT count(R_REGIONKEY) FROM sf_pool.TPCH_SF1.REGION;
+----
+5
+
+endloop
+
+# Pool sanity after the storm: a fresh scan on the same session still works
+query I
+SELECT count(N_NATIONKEY) FROM sf_pool.TPCH_SF1.NATION;
+----
+25

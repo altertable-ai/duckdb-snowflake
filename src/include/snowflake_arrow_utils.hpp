@@ -16,8 +16,9 @@ namespace duckdb {
 // function which expects a factory that can produce ArrowArrayStreamWrapper
 // instances
 struct SnowflakeArrowStreamFactory {
-	// Snowflake connection managed by the client manager
-	shared_ptr<snowflake::SnowflakeClient> connection;
+	// Connection leased exclusively for this scan, so no other scan drives it
+	// concurrently (ADBC connections are not thread-safe). Returned on destruction.
+	snowflake::ConnectionLease lease;
 
 	// SQL query to execute (original base query)
 	std::string query;
@@ -48,19 +49,20 @@ struct SnowflakeArrowStreamFactory {
 	TableFilterSet *current_filters = nullptr;
 	vector<string> column_names; // Maps column indices to names for filter building
 
-	SnowflakeArrowStreamFactory(shared_ptr<snowflake::SnowflakeClient> conn, const std::string &query_str)
-	    : connection(std::move(conn)), query(query_str), modified_query(query_str) {
+	SnowflakeArrowStreamFactory(snowflake::ConnectionLease lease_p, const std::string &query_str)
+	    : lease(std::move(lease_p)), query(query_str), modified_query(query_str) {
 		std::memset(&statement, 0, sizeof(statement));
 		std::memset(&cached_stream, 0, sizeof(cached_stream));
 	}
 
 	~SnowflakeArrowStreamFactory() {
-		// Clean up the ADBC statement if it was initialized
+		// Release ADBC resources that live on the leased connection BEFORE the
+		// lease (declared first, destroyed last) returns that connection to the
+		// pool — the statement/stream are backed by this connection.
 		if (statement_initialized) {
 			AdbcError error;
 			AdbcStatementRelease(&statement, &error);
 		}
-		// Release cached stream if present
 		if (has_cached_stream && cached_stream.release) {
 			cached_stream.release(&cached_stream);
 		}

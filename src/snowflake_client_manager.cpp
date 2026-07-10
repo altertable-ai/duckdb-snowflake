@@ -4,66 +4,82 @@
 namespace duckdb {
 namespace snowflake {
 
+ConnectionLease::~ConnectionLease() {
+	Reset();
+}
+
+void ConnectionLease::Reset() {
+	if (client && manager) {
+		manager->Return(config, std::move(client), reusable);
+	}
+	manager = nullptr;
+	client = nullptr;
+}
+
 SnowflakeClientManager &SnowflakeClientManager::GetInstance() {
 	static SnowflakeClientManager instance;
 	return instance;
 }
 
-shared_ptr<SnowflakeClient> SnowflakeClientManager::GetConnection(const SnowflakeConfig &config) {
-	std::lock_guard<std::mutex> lock(connection_mutex);
-
-	auto it = connections.find(config);
-	if (it != connections.end() && it->second->IsConnected()) {
-		// Validate the connection is still alive (handles token expiration)
-		if (it->second->TestConnection()) {
-			DPRINT("Reusing existing valid connection\n");
-			return it->second;
+ConnectionLease SnowflakeClientManager::Acquire(const SnowflakeConfig &config) {
+	// Try to reuse an idle connection for this config.
+	shared_ptr<SnowflakeClient> client;
+	{
+		std::lock_guard<std::mutex> lock(pool_mutex);
+		auto it = idle_connections.find(config);
+		if (it != idle_connections.end() && !it->second.empty()) {
+			client = std::move(it->second.back());
+			it->second.pop_back();
 		}
-		// Connection is stale (e.g., token expired), remove it
-		DPRINT("Cached connection is stale, removing and creating new connection\n");
-		connections.erase(it);
 	}
 
-	// Create new connection
+	if (client) {
+		// Validate the reused connection outside the pool lock (TestConnection may
+		// do a round-trip). If it's stale (e.g. token expired) drop it and create
+		// a fresh one below.
+		if (client->IsConnected() && client->TestConnection()) {
+			DPRINT("Reusing pooled Snowflake connection\n");
+			return ConnectionLease(*this, config, std::move(client));
+		}
+		DPRINT("Pooled connection is stale, discarding and reconnecting\n");
+		client.reset();
+	}
+
+	// No usable idle connection — create a dedicated one.
 	DPRINT("Creating new Snowflake connection\n");
-	auto connection = make_shared_ptr<SnowflakeClient>();
-	connection->Connect(config);
-
-	connections[config] = connection;
-	return connection;
+	client = make_shared_ptr<SnowflakeClient>();
+	client->Connect(config);
+	return ConnectionLease(*this, config, std::move(client));
 }
 
-void SnowflakeClientManager::ReleaseConnection(const SnowflakeConfig &config) {
-	std::lock_guard<std::mutex> lock(connection_mutex);
-	connections.erase(config);
-}
-
-void SnowflakeClientManager::InvalidateConnection(const SnowflakeConfig &config) {
-	std::lock_guard<std::mutex> lock(connection_mutex);
-	auto it = connections.find(config);
-	if (it != connections.end()) {
-		DPRINT("Invalidating cached connection (auth error or expiration)\n");
-		connections.erase(it);
+void SnowflakeClientManager::Return(const SnowflakeConfig &config, shared_ptr<SnowflakeClient> client, bool reusable) {
+	if (!client) {
+		return;
 	}
+	if (!reusable || !client->IsConnected()) {
+		// Not reusable (auth error) or already disconnected: let it be torn down
+		// (the by-value `client` disconnects when destroyed after this returns).
+		return;
+	}
+	std::lock_guard<std::mutex> lock(pool_mutex);
+	auto &idle = idle_connections[config];
+	if (idle.size() < MAX_IDLE_PER_CONFIG) {
+		idle.push_back(std::move(client));
+	}
+	// Over the idle cap: drop it (destroyed after the lock is released).
 }
 
-shared_ptr<SnowflakeClient> SnowflakeClientManager::GetFreshConnection(const SnowflakeConfig &config) {
-	std::lock_guard<std::mutex> lock(connection_mutex);
-
-	// Remove any existing connection
-	auto it = connections.find(config);
-	if (it != connections.end()) {
-		DPRINT("Removing existing connection to create fresh one\n");
-		connections.erase(it);
+void SnowflakeClientManager::DrainIdle(const SnowflakeConfig &config) {
+	std::vector<shared_ptr<SnowflakeClient>> to_close;
+	{
+		std::lock_guard<std::mutex> lock(pool_mutex);
+		auto it = idle_connections.find(config);
+		if (it != idle_connections.end()) {
+			to_close = std::move(it->second);
+			idle_connections.erase(it);
+		}
 	}
-
-	// Create new connection
-	DPRINT("Creating fresh Snowflake connection\n");
-	auto connection = make_shared_ptr<SnowflakeClient>();
-	connection->Connect(config);
-
-	connections[config] = connection;
-	return connection;
+	// Destroy (disconnect) the drained connections outside the lock.
 }
 
 } // namespace snowflake

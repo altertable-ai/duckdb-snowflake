@@ -6,10 +6,10 @@ namespace duckdb {
 namespace snowflake {
 
 SnowflakeSchemaEntry::SnowflakeSchemaEntry(Catalog &catalog, const string &schema_name, CreateSchemaInfo &info,
-                                           const shared_ptr<SnowflakeClient> &client)
-    : SchemaCatalogEntry(catalog, info), client(client) {
+                                           const SnowflakeConfig &config)
+    : SchemaCatalogEntry(catalog, info), config(config) {
 	name = schema_name;
-	tables = make_uniq<SnowflakeTableSet>(*this, client, schema_name);
+	tables = make_uniq<SnowflakeTableSet>(*this, config, schema_name);
 }
 
 optional_ptr<CatalogEntry> SnowflakeSchemaEntry::LookupEntry(CatalogTransaction transaction,

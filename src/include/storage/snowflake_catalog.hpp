@@ -60,7 +60,7 @@ public:
 	                             PhysicalOperator &plan) override;
 
 private:
-	shared_ptr<SnowflakeClient> client;
+	SnowflakeConfig config;
 	SnowflakeSchemaSet schemas;
 	SnowflakeOptions options;
 };

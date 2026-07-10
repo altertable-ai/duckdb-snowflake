@@ -10,8 +10,8 @@ namespace snowflake {
 //! SnowflakeTableSet represents a set of tables in Snowflake
 class SnowflakeTableSet : public SnowflakeCatalogSet {
 public:
-	SnowflakeTableSet(SnowflakeSchemaEntry &schema, shared_ptr<SnowflakeClient> client, const string &schema_name)
-	    : SnowflakeCatalogSet(schema.catalog), schema(schema), client(std::move(client)), schema_name(schema_name) {
+	SnowflakeTableSet(SnowflakeSchemaEntry &schema, SnowflakeConfig config, const string &schema_name)
+	    : SnowflakeCatalogSet(schema.catalog), schema(schema), config(std::move(config)), schema_name(schema_name) {
 	}
 
 protected:
@@ -20,7 +20,7 @@ protected:
 
 private:
 	SnowflakeSchemaEntry &schema;
-	shared_ptr<SnowflakeClient> client;
+	SnowflakeConfig config;
 	const string schema_name;
 };
 } // namespace snowflake

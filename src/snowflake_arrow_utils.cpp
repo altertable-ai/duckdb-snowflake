@@ -105,7 +105,7 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 		std::memset(&error, 0, sizeof(error));
 
 		// Create a new ADBC statement from the connection
-		AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &factory->statement, &error);
+		AdbcStatusCode status = AdbcStatementNew(factory->lease->GetConnection(), &factory->statement, &error);
 		DPRINT("Statement created at %p for factory %p\n", (void *)&factory->statement, (void *)factory);
 		if (status != ADBC_STATUS_OK) {
 			throw IOException("Failed to create statement");
@@ -158,7 +158,10 @@ unique_ptr<ArrowArrayStreamWrapper> SnowflakeProduceArrowScan(uintptr_t factory_
 		if (IsAuthenticationError(error_msg)) {
 			// Invalidate the cached connection so next attempt gets a fresh one
 			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
-			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			// Don't return this connection to the pool, and drop any idle ones —
+			// the auth token has likely expired for all sessions on this config.
+			factory->lease.Invalidate();
+			client_manager.DrainIdle(factory->lease->GetConfig());
 			DPRINT("Authentication error detected, connection invalidated for retry\n");
 
 			// Provide a helpful error message
@@ -188,7 +191,7 @@ void SnowflakeGetArrowSchema(ArrowArrayStream *factory_ptr, ArrowSchema &schema)
 		AdbcError error;
 		std::memset(&error, 0, sizeof(error));
 
-		AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &factory->statement, &error);
+		AdbcStatusCode status = AdbcStatementNew(factory->lease->GetConnection(), &factory->statement, &error);
 		DPRINT("Statement created at %p for factory %p\n", (void *)&factory->statement, (void *)factory);
 		if (status != ADBC_STATUS_OK) {
 			throw IOException("Failed to create statement");
@@ -246,7 +249,7 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 	// which the scan production path creates and uses on its own.
 	AdbcStatement probe_stmt;
 	std::memset(&probe_stmt, 0, sizeof(probe_stmt));
-	AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &probe_stmt, &error);
+	AdbcStatusCode status = AdbcStatementNew(factory->lease->GetConnection(), &probe_stmt, &error);
 	if (status != ADBC_STATUS_OK) {
 		throw IOException("Failed to create statement for schema probe");
 	}
@@ -281,7 +284,10 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 		AdbcStatementRelease(&probe_stmt, nullptr);
 		if (IsAuthenticationError(msg)) {
 			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
-			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			// Don't return this connection to the pool, and drop any idle ones —
+			// the auth token has likely expired for all sessions on this config.
+			factory->lease.Invalidate();
+			client_manager.DrainIdle(factory->lease->GetConfig());
 			throw IOException(msg + "\n\nThe authentication token may have expired. "
 			                        "Please retry your query - a fresh connection will be established automatically.");
 		}
@@ -305,7 +311,7 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowSchema &schema) {
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));
-	AdbcStatusCode status = AdbcStatementNew(factory->connection->GetConnection(), &factory->statement, &error);
+	AdbcStatusCode status = AdbcStatementNew(factory->lease->GetConnection(), &factory->statement, &error);
 	if (status != ADBC_STATUS_OK) {
 		throw IOException("Failed to create statement for snowflake_query");
 	}
@@ -335,7 +341,10 @@ void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowS
 		}
 		if (IsAuthenticationError(msg)) {
 			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
-			client_manager.InvalidateConnection(factory->connection->GetConfig());
+			// Don't return this connection to the pool, and drop any idle ones —
+			// the auth token has likely expired for all sessions on this config.
+			factory->lease.Invalidate();
+			client_manager.DrainIdle(factory->lease->GetConfig());
 			DPRINT("Authentication error detected, connection invalidated for retry\n");
 			throw IOException(msg + "\n\nThe authentication token may have expired. "
 			                        "Please retry your query - a fresh connection will be established automatically.");

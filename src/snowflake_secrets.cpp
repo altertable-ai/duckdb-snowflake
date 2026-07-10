@@ -218,8 +218,8 @@ bool SnowflakeSecretsHelper::ValidateCredentials(ClientContext &context, const s
 		auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
 
 		try {
-			// Try to get a connection - this will validate the credentials
-			auto connection = client_manager.GetConnection(config);
+			// Lease a connection from the pool - this validates the credentials
+			auto lease = client_manager.Acquire(config);
 
 			// If we got here, connection succeeded - test with a simple query
 			AdbcStatement statement;
@@ -227,7 +227,7 @@ bool SnowflakeSecretsHelper::ValidateCredentials(ClientContext &context, const s
 			std::memset(&error_obj, 0, sizeof(error_obj));
 			std::memset(&statement, 0, sizeof(statement));
 
-			AdbcStatusCode status = AdbcStatementNew(connection->GetConnection(), &statement, &error_obj);
+			AdbcStatusCode status = AdbcStatementNew(lease->GetConnection(), &statement, &error_obj);
 			if (status != ADBC_STATUS_OK) {
 				if (error_obj.release) {
 					error_obj.release(&error_obj);
@@ -297,8 +297,8 @@ bool SnowflakeSecretsHelper::ValidateCredentials(ClientContext &context, const s
 		auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
 
 		try {
-			// Try to get a connection - this will validate the credentials
-			auto connection = client_manager.GetConnection(config);
+			// Lease a connection from the pool - this validates the credentials
+			auto lease = client_manager.Acquire(config);
 
 			// If we got here, connection succeeded
 			// Test with a simple query to be sure
@@ -307,7 +307,7 @@ bool SnowflakeSecretsHelper::ValidateCredentials(ClientContext &context, const s
 			std::memset(&error_obj, 0, sizeof(error_obj));
 			std::memset(&statement, 0, sizeof(statement));
 
-			AdbcStatusCode status = AdbcStatementNew(connection->GetConnection(), &statement, &error_obj);
+			AdbcStatusCode status = AdbcStatementNew(lease->GetConnection(), &statement, &error_obj);
 			if (status != ADBC_STATUS_OK) {
 				if (error_obj.release) {
 					error_obj.release(&error_obj);
