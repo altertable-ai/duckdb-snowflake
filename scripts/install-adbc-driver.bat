@@ -42,23 +42,25 @@ echo      DuckDB Snowflake ADBC Driver Installer
 REM Detect DuckDB version
 echo %INFO% Detecting DuckDB version...
 
-set DUCKDB_CMD=
+set "DUCKDB_BIN="
 if defined DUCKDB_CMD (
-    set DUCKDB_CMD=%DUCKDB_CMD%
+    set "DUCKDB_BIN=%DUCKDB_CMD%"
 ) else if exist "%CD%\duckdb.exe" (
-    set DUCKDB_CMD=%CD%\duckdb.exe
+    set "DUCKDB_BIN=%CD%\duckdb.exe"
 ) else if exist "%~dp0..\duckdb.exe" (
-    set DUCKDB_CMD=%~dp0..\duckdb.exe
+    set "DUCKDB_BIN=%~dp0..\duckdb.exe"
 ) else if exist "%~dp0duckdb.exe" (
-    set DUCKDB_CMD=%~dp0duckdb.exe
+    set "DUCKDB_BIN=%~dp0duckdb.exe"
 ) else if exist "%USERPROFILE%\duckdb-cli\duckdb.exe" (
-    set DUCKDB_CMD=%USERPROFILE%\duckdb-cli\duckdb.exe
+    set "DUCKDB_BIN=%USERPROFILE%\duckdb-cli\duckdb.exe"
 ) else (
-    for /f "delims=" %%I in ('where duckdb.exe 2^>nul') do set DUCKDB_CMD=%%I
+    for /f "delims=" %%I in ('where duckdb.exe 2^>nul') do set "DUCKDB_BIN=%%I"
 )
 
-if not defined DUCKDB_CMD (
-    set DUCKDB_CMD=duckdb
+if not defined DUCKDB_BIN (
+    set "DUCKDB_CMD=duckdb"
+) else (
+    set "DUCKDB_CMD=%DUCKDB_BIN%"
 )
 
 echo %INFO% Using DuckDB binary: %DUCKDB_CMD%
