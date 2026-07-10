@@ -66,31 +66,30 @@ if not defined DUCKDB_BIN (
 echo %INFO% Using DuckDB binary: %DUCKDB_CMD%
 
 set DUCKDB_OUTPUT=
-for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -version 2^>nul') do set DUCKDB_OUTPUT=%%i
-
-echo %INFO% DuckDB probe output: %DUCKDB_OUTPUT%
+for /f "tokens=1" %%i in ('"%DUCKDB_CMD%" -version 2^>nul') do set DUCKDB_OUTPUT=%%i
 
 if not defined DUCKDB_OUTPUT (
     echo %WARNING% No output from DuckDB - trying fallback SQL invocation...
-    for /f "tokens=*" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
-    echo %INFO% DuckDB fallback output: %DUCKDB_OUTPUT%
+    for /f "tokens=1" %%i in ('"%DUCKDB_CMD%" -c "SELECT version()" 2^>nul') do set DUCKDB_OUTPUT=%%i
 )
 
-REM Extract version from output (format: "v1.4.2")
-for /f "tokens=*" %%v in ("%DUCKDB_OUTPUT%") do (
-    set VERSION_LINE=%%v
+if not defined DUCKDB_OUTPUT (
+    echo %ERROR% Could not detect DuckDB version. Is DuckDB installed?
+    echo Please install DuckDB from https://duckdb.org/docs/installation/
+    exit /b 1
 )
+
+echo %INFO% DuckDB version token: %DUCKDB_OUTPUT%
 
 REM Parse version - extract vX.Y.Z pattern
-echo %VERSION_LINE% | findstr /r "v[0-9]*\.[0-9]*\.[0-9]*" >nul
+echo %DUCKDB_OUTPUT% | findstr /r "v[0-9]*\.[0-9]*\.[0-9]*" >nul
 if errorlevel 1 (
     echo %ERROR% Could not detect DuckDB version. Is DuckDB installed?
     echo Please install DuckDB from https://duckdb.org/docs/installation/
     exit /b 1
 )
 
-REM Extract version using string manipulation
-for /f "tokens=2 delims= " %%a in ("%VERSION_LINE%") do set DUCKDB_VERSION=%%a
+set DUCKDB_VERSION=%DUCKDB_OUTPUT%
 
 echo      DuckDB Version: %DUCKDB_VERSION%
 echo ================================================================
