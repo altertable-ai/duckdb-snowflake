@@ -63,8 +63,6 @@ if not defined DUCKDB_BIN (
     set "DUCKDB_CMD=%DUCKDB_BIN%"
 )
 
-echo %INFO% Using DuckDB binary: %DUCKDB_CMD%
-
 set DUCKDB_OUTPUT=
 for /f "tokens=1" %%i in ('"%DUCKDB_CMD%" -version 2^>nul') do set DUCKDB_OUTPUT=%%i
 
@@ -78,8 +76,6 @@ if not defined DUCKDB_OUTPUT (
     echo Please install DuckDB from https://duckdb.org/docs/installation/
     exit /b 1
 )
-
-echo %INFO% DuckDB version token: %DUCKDB_OUTPUT%
 
 REM Parse version - extract vX.Y.Z pattern
 echo %DUCKDB_OUTPUT% | findstr /r "v[0-9]*\.[0-9]*\.[0-9]*" >nul
