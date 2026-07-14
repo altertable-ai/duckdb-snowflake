@@ -36,7 +36,37 @@ jobs:
       - name: Build extension
         run: |
           make release-build
-      
+
+      # Materialize the key-pair credential so the key-pair test suite runs.
+      # Almost every snowflake_*.test requires key-pair auth (AUTH_TYPE
+      # 'key_pair'); password auth can't be used non-interactively because the
+      # account enforces MFA. Without these secrets the vars stay UNSET and
+      # require-env skips those tests (an EMPTY var counts as set and would make
+      # them fail instead — so we only export when the key is actually present).
+      - name: Set up Snowflake key-pair auth
+        env:
+          SNOWFLAKE_PRIVATE_KEY_B64: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_B64 }}
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_KEYPAIR_USER: ${{ secrets.SNOWFLAKE_KEYPAIR_USER }}
+        run: |
+          if [ -z "$SNOWFLAKE_PRIVATE_KEY_B64" ]; then
+            echo "SNOWFLAKE_PRIVATE_KEY_B64 not set — key-pair tests will skip."
+            exit 0
+          fi
+          KEY_PATH="$RUNNER_TEMP/sf_key.p8"
+          printf '%s' "$SNOWFLAKE_PRIVATE_KEY_B64" | openssl base64 -d -A > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          # Export only now that the key exists. Tests reference several names for
+          # the same key/passphrase/user — set them all so every file resolves.
+          {
+            echo "SNOWFLAKE_PRIVATE_KEY_FILE=$KEY_PATH"
+            echo "SNOWFLAKE_PRIVATE_KEY_PATH=$KEY_PATH"
+            echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+            echo "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+            echo "SNOWFLAKE_KEYPAIR_USER=$SNOWFLAKE_KEYPAIR_USER"
+          } >> "$GITHUB_ENV"
+          echo "Key-pair auth configured; key-pair tests will run."
+
       - name: Run Snowflake tests
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
@@ -60,6 +90,10 @@ jobs:
           echo "Running test/sql/pushdown/*.test files..."
           ./build/release/test/unittest "[pushdown]"
       
+      - name: Remove private key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sf_key.p8"
+
       - name: Upload test results and profiling data
         if: always()
         uses: actions/upload-artifact@v4
