@@ -40,31 +40,50 @@ jobs:
       # Materialize the key-pair credential so the key-pair test suite runs.
       # Almost every snowflake_*.test requires key-pair auth (AUTH_TYPE
       # 'key_pair'); password auth can't be used non-interactively because the
-      # account enforces MFA. Without these secrets the vars stay UNSET and
-      # require-env skips those tests (an EMPTY var counts as set and would make
-      # them fail instead — so we only export when the key is actually present).
+      # account enforces MFA. Consumes the existing SNOWFLAKE_PRIVATE_KEY secret
+      # (raw PEM or base64 — auto-detected) and falls back to SNOWFLAKE_USERNAME
+      # for the key-pair user. Vars are exported only when usable, so absent
+      # secrets leave them UNSET and require-env SKIPS (an EMPTY var counts as
+      # set and would make the tests fail instead); this also keeps forks green.
       - name: Set up Snowflake key-pair auth
         env:
-          SNOWFLAKE_PRIVATE_KEY_B64: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_B64 }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
           SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
           SNOWFLAKE_KEYPAIR_USER: ${{ secrets.SNOWFLAKE_KEYPAIR_USER }}
+          SNOWFLAKE_USERNAME: ${{ secrets.SNOWFLAKE_USERNAME }}
         run: |
-          if [ -z "$SNOWFLAKE_PRIVATE_KEY_B64" ]; then
-            echo "SNOWFLAKE_PRIVATE_KEY_B64 not set — key-pair tests will skip."
+          if [ -z "$SNOWFLAKE_PRIVATE_KEY" ]; then
+            echo "SNOWFLAKE_PRIVATE_KEY not set — key-pair tests will skip."
             exit 0
           fi
           KEY_PATH="$RUNNER_TEMP/sf_key.p8"
-          printf '%s' "$SNOWFLAKE_PRIVATE_KEY_B64" | openssl base64 -d -A > "$KEY_PATH"
+          # The secret may be raw PEM (starts with -----BEGIN) or base64-encoded.
+          if printf '%s' "$SNOWFLAKE_PRIVATE_KEY" | head -c 32 | grep -q "BEGIN"; then
+            printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$KEY_PATH"
+          else
+            printf '%s' "$SNOWFLAKE_PRIVATE_KEY" | openssl base64 -d -A > "$KEY_PATH"
+          fi
           chmod 600 "$KEY_PATH"
-          # Export only now that the key exists. Tests reference several names for
-          # the same key/passphrase/user — set them all so every file resolves.
+          # Every key-pair test does `require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE`,
+          # so the passphrase var must be SET for them to run. An encrypted key with
+          # no passphrase secret therefore can't run the suite — skip cleanly.
+          if grep -q "ENCRYPTED" "$KEY_PATH" && [ -z "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
+            echo "Key is encrypted but SNOWFLAKE_PRIVATE_KEY_PASSPHRASE is not set — key-pair tests will skip."
+            rm -f "$KEY_PATH"
+            exit 0
+          fi
+          KP_USER="${SNOWFLAKE_KEYPAIR_USER:-$SNOWFLAKE_USERNAME}"
           {
             echo "SNOWFLAKE_PRIVATE_KEY_FILE=$KEY_PATH"
             echo "SNOWFLAKE_PRIVATE_KEY_PATH=$KEY_PATH"
-            echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
-            echo "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
-            echo "SNOWFLAKE_KEYPAIR_USER=$SNOWFLAKE_KEYPAIR_USER"
+            echo "SNOWFLAKE_KEYPAIR_USER=$KP_USER"
           } >> "$GITHUB_ENV"
+          if [ -n "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
+            {
+              echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+              echo "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+            } >> "$GITHUB_ENV"
+          fi
           echo "Key-pair auth configured; key-pair tests will run."
 
       - name: Run Snowflake tests
