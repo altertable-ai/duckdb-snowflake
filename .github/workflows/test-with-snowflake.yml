@@ -88,6 +88,22 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "Key-pair auth configured; key-pair tests will run."
 
+      # The geometry and timestamp tests CREATE/DROP a fixture schema, so they
+      # need a WRITABLE database — separate from SNOWFLAKE_DATABASE, which points
+      # at the read-only sample source (SNOWFLAKE_SAMPLE_DATA) that the TPCH read
+      # tests use. Exported only when the secret is set, so it stays unset and
+      # those two tests skip (require-env) rather than fail on an empty DB name.
+      - name: Configure writable test database
+        env:
+          SNOWFLAKE_TEST_WRITE_DATABASE: ${{ secrets.SNOWFLAKE_TEST_WRITE_DATABASE }}
+        run: |
+          if [ -n "$SNOWFLAKE_TEST_WRITE_DATABASE" ]; then
+            echo "SNOWFLAKE_TEST_WRITE_DATABASE=$SNOWFLAKE_TEST_WRITE_DATABASE" >> "$GITHUB_ENV"
+            echo "Writable test DB configured; geometry/timestamp tests will run."
+          else
+            echo "SNOWFLAKE_TEST_WRITE_DATABASE not set — geometry/timestamp tests will skip."
+          fi
+
       - name: Run Snowflake tests
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}

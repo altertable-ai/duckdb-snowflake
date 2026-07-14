@@ -9,7 +9,8 @@
 # Arrow scanner imports those as native GEOMETRY — no ST_ASWKB rewrite, no
 # INFORMATION_SCHEMA detection, no opt-in flag. NULLs are handled by the driver.
 #
-# Requires a writable SNOWFLAKE_DATABASE (the test creates and drops its fixture)
+# Writes to SNOWFLAKE_TEST_WRITE_DATABASE, a writable DB kept separate from
+# SNOWFLAKE_DATABASE (the read-only sample source) so one run can do both.
 # and an ADBC driver new enough to emit geoarrow.wkb; with an older driver geo
 # columns come back as text and the typeof() assertions below fail.
 
@@ -23,7 +24,7 @@ require-env SNOWFLAKE_PRIVATE_KEY_FILE
 
 require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
 
-require-env SNOWFLAKE_DATABASE
+require-env SNOWFLAKE_TEST_WRITE_DATABASE
 
 statement ok
 CREATE SECRET sf_geo_secret (
@@ -33,29 +34,29 @@ CREATE SECRET sf_geo_secret (
     AUTH_TYPE 'key_pair',
     PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
     PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
-    DATABASE '${SNOWFLAKE_DATABASE}',
+    DATABASE '${SNOWFLAKE_TEST_WRITE_DATABASE}',
     WAREHOUSE 'COMPUTE_WH'
 );
 
 # Fixture: a GEOGRAPHY table with three points and one NULL (Null Island row).
 statement ok
-SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST', 'sf_geo_secret');
+SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST', 'sf_geo_secret');
 
 statement ok
-SELECT * FROM snowflake_query('CREATE OR REPLACE TABLE ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS (ID INTEGER, NAME VARCHAR, LOCATION GEOGRAPHY)', 'sf_geo_secret');
+SELECT * FROM snowflake_query('CREATE OR REPLACE TABLE ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS (ID INTEGER, NAME VARCHAR, LOCATION GEOGRAPHY)', 'sf_geo_secret');
 
 statement ok
-SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 1, ''New York'', ST_GEOGRAPHYFROMWKT(''POINT(-74.006 40.7128)'')', 'sf_geo_secret');
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 1, ''New York'', ST_GEOGRAPHYFROMWKT(''POINT(-74.006 40.7128)'')', 'sf_geo_secret');
 
 statement ok
-SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 2, ''London'', ST_GEOGRAPHYFROMWKT(''POINT(-0.1276 51.5074)'')', 'sf_geo_secret');
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 2, ''London'', ST_GEOGRAPHYFROMWKT(''POINT(-0.1276 51.5074)'')', 'sf_geo_secret');
 
 statement ok
-SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 4, ''Null Island'', NULL', 'sf_geo_secret');
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS SELECT 4, ''Null Island'', NULL', 'sf_geo_secret');
 
 # --- snowflake_query path: schema comes from the executed (peeked) stream ---
 query I
-SELECT typeof(LOCATION) FROM snowflake_query('SELECT LOCATION FROM ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS WHERE ID = 1', 'sf_geo_secret');
+SELECT typeof(LOCATION) FROM snowflake_query('SELECT LOCATION FROM ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST.GEO_POINTS WHERE ID = 1', 'sf_geo_secret');
 ----
 GEOMETRY
 
@@ -97,7 +98,7 @@ statement ok
 DETACH sf_geo;
 
 statement ok
-SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_GEO_TEST CASCADE', 'sf_geo_secret');
+SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_GEO_TEST CASCADE', 'sf_geo_secret');
 
 statement ok
 DROP SECRET IF EXISTS sf_geo_secret;
