@@ -73,17 +73,19 @@ jobs:
             exit 0
           fi
           KP_USER="${SNOWFLAKE_KEYPAIR_USER:-$SNOWFLAKE_USERNAME}"
+          # Export the passphrase vars unconditionally so the tests'
+          # `require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE` is satisfied and they
+          # run. For an unencrypted key this is empty, which is accepted (empty ==
+          # set for require-env, and CREATE SECRET ... PRIVATE_KEY_PASSWORD '' works
+          # for an unencrypted key — verified). For an encrypted key the guard above
+          # guarantees a real passphrase is present.
           {
             echo "SNOWFLAKE_PRIVATE_KEY_FILE=$KEY_PATH"
             echo "SNOWFLAKE_PRIVATE_KEY_PATH=$KEY_PATH"
             echo "SNOWFLAKE_KEYPAIR_USER=$KP_USER"
+            echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+            echo "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
           } >> "$GITHUB_ENV"
-          if [ -n "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
-            {
-              echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
-              echo "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
-            } >> "$GITHUB_ENV"
-          fi
           echo "Key-pair auth configured; key-pair tests will run."
 
       - name: Run Snowflake tests
