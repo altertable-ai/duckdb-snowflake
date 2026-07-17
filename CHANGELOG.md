@@ -9,7 +9,7 @@ The version recorded here is the **extension version** (what `snowflake_version(
 returns and what the [community-extensions descriptor](https://github.com/duckdb/community-extensions/blob/main/extensions/snowflake/description.yml)
 pins). The DuckDB version each release targets is noted separately.
 
-## [0.5.0] - 2026-07-13
+## [0.5.0] - 2026-07-17
 
 Targets DuckDB **v1.5.4**.
 
@@ -24,6 +24,8 @@ Targets DuckDB **v1.5.4**.
 - Install the ADBC Snowflake driver from the ADBC Driver Foundry (`adbc-drivers/snowflake`, `go/v1.11.0`) instead of the deprecated `apache/arrow-adbc` wheels; the Foundry build ships GeoArrow support ([#47](https://github.com/iqea-ai/duckdb-snowflake/pull/47), reported by amoeba [#45](https://github.com/iqea-ai/duckdb-snowflake/issues/45))
 
 ### Fixed
+- Projected `SHOW`/`DESC` through `snowflake_query()` no longer crashes (ArrowTypeInfo type mismatch) or silently returns swapped columns: the scan re-targets at `TABLE(RESULT_SCAN('<query id>'))` so the projected-subquery machinery applies ([#48](https://github.com/iqea-ai/duckdb-snowflake/issues/48), in [#55](https://github.com/iqea-ai/duckdb-snowflake/pull/55))
+- The ADBC driver is discovered via standardized driver manifests (`snowflake.toml` in `ADBC_DRIVER_PATH`, the active conda prefix, per-user and system dirs), so `dbc install snowflake` works with no env var; the not-found error lists every location searched, and a CI smoke test guards the manifest path ([#50](https://github.com/iqea-ai/duckdb-snowflake/issues/50), in [#56](https://github.com/iqea-ai/duckdb-snowflake/pull/56))
 - `snowflake_query()` no longer reads the wrong column (SIGSEGV / silent wrong data) when DuckDB requests a non-prefix projection ([#32](https://github.com/iqea-ai/duckdb-snowflake/issues/32), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
 - `TIMESTAMP_NTZ` columns read through an attached catalog now use the correct unit instead of being misread as nanoseconds; the bind schema comes from the data path rather than `AdbcStatementExecuteSchema` ([#44](https://github.com/iqea-ai/duckdb-snowflake/issues/44), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
 - Quote projection-list and `WHERE` column references in pushdown SQL so lowercase identifiers don't fold to uppercase (follow-up to [#38](https://github.com/iqea-ai/duckdb-snowflake/issues/38), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
