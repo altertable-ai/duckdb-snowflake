@@ -1,0 +1,80 @@
+# name: test/sql/snowflake_show_projection.test
+# description: Regression test for issue #48 - projected SHOW/DESC through snowflake_query()
+# group: [sql]
+
+#              SHOW/DESC cannot be wrapped as a subquery, so the bind re-targets the scan at
+#              TABLE(RESULT_SCAN('<query id>')) and reuses the projected-subquery machinery
+#              from the SELECT path. Before the fix, non-prefix projections misaligned
+#              DuckDB's positional Arrow reads: type mismatches (ArrowTypeInfo INTERNAL
+#              Error) or silently swapped values; prefix projections worked by accident.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_KEYPAIR_USER
+
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_show_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Test 1: SELECT * over SHOW (baseline - always worked)
+query I
+SELECT count(*) >= 1 FROM snowflake_query('SHOW DATABASES', 'sf_show_secret');
+----
+true
+
+# Test 2: non-prefix projection over SHOW DATABASES (the #48 crash).
+# created_on (timestamp) is column 0, so projecting name/kind read a DATE_TIME
+# where a STRING was expected before the fix.
+query II
+SELECT "name", "kind" FROM snowflake_query('SHOW DATABASES LIKE ''SNOWFLAKE''', 'sf_show_secret');
+----
+SNOWFLAKE	APPLICATION
+
+# Test 3: reversed projection returns values in the requested order, not
+# positionally swapped (the silent-wrong-data variant of #48)
+query II
+SELECT "kind", "name" FROM snowflake_query('SHOW DATABASES LIKE ''SNOWFLAKE''', 'sf_show_secret');
+----
+APPLICATION	SNOWFLAKE
+
+# Test 4: single non-first column over DESC TABLE
+query I
+SELECT "type" FROM snowflake_query('DESC TABLE ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER', 'sf_show_secret') LIMIT 1;
+----
+NUMBER(38,0)
+
+# Test 5: DESCRIBE spelled out routes the same way
+query I
+SELECT "name" FROM snowflake_query('DESCRIBE TABLE ${SNOWFLAKE_DATABASE}.TPCH_SF1.CUSTOMER', 'sf_show_secret') LIMIT 2;
+----
+C_CUSTKEY
+C_NAME
+
+# Test 6: aggregation over SHOW (empty projection - all columns pruned)
+query I
+SELECT count(*) FROM snowflake_query('SHOW DATABASES LIKE ''SNOWFLAKE''', 'sf_show_secret');
+----
+1
+
+# Cleanup
+statement ok
+DROP SECRET IF EXISTS sf_show_secret;
