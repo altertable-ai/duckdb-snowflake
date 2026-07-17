@@ -114,7 +114,7 @@ jobs:
         run: |
           # Verify environment variables are set
           if [ -z "$SNOWFLAKE_ACCOUNT" ]; then
-            echo "⚠️  SNOWFLAKE_ACCOUNT secret not set - tests will be skipped"
+            echo "WARNING: SNOWFLAKE_ACCOUNT secret not set - tests will be skipped"
             exit 0
           fi
           

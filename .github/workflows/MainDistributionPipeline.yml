@@ -174,7 +174,7 @@ jobs:
           
           # Calculate size in MB (using awk if bc is not available)
           SIZE_MB=$(echo "scale=2; $PACKAGE_SIZE / 1024 / 1024" | bc 2>/dev/null || awk "BEGIN {printf \"%.2f\", $PACKAGE_SIZE / 1024 / 1024}")
-          echo "✓ Package size validation passed: ${SIZE_MB}MB"
+          echo "Package size validation passed: ${SIZE_MB}MB"
           
       - name: Upload complete package
         uses: actions/upload-artifact@v4

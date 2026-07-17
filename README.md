@@ -146,12 +146,12 @@ If you prefer to install manually, download and install the appropriate driver f
 
 | Platform | DuckDB Directory | Release Asset | Status |
 |----------|------------------|---------------|--------|
-| **Linux x86_64** | `linux_amd64` | `snowflake_linux_amd64_v1.11.0.tar.gz` | ✅ Supported |
-| **Linux ARM64** | `linux_arm64` | `snowflake_linux_arm64_v1.11.0.tar.gz` | ✅ Supported |
-| **macOS ARM64** | `osx_arm64` | `snowflake_macos_arm64_v1.11.0.tar.gz` | ✅ Supported |
-| **macOS x86_64** | `osx_amd64` | - | ⚠️ Build from source |
-| **Windows x86_64** | `windows_amd64` | `snowflake_windows_amd64_v1.11.0.tar.gz` | ✅ Supported |
-| **Windows ARM64** | - | - | ❌ Not Available |
+| **Linux x86_64** | `linux_amd64` | `snowflake_linux_amd64_v1.11.0.tar.gz` | Supported |
+| **Linux ARM64** | `linux_arm64` | `snowflake_linux_arm64_v1.11.0.tar.gz` | Supported |
+| **macOS ARM64** | `osx_arm64` | `snowflake_macos_arm64_v1.11.0.tar.gz` | Supported |
+| **macOS x86_64** | `osx_amd64` | - | Build from source |
+| **Windows x86_64** | `windows_amd64` | `snowflake_windows_amd64_v1.11.0.tar.gz` | Supported |
+| **Windows ARM64** | - | - | Not available |
 
 > **Note:** The ADBC Driver Foundry ships no macOS x86_64 (Intel) or Windows ARM64 builds. On those platforms, build the driver from [source](https://github.com/adbc-drivers/snowflake) and set `SNOWFLAKE_ADBC_DRIVER_PATH` to the result.
 
