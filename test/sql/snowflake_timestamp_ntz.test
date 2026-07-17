@@ -11,8 +11,9 @@
 # sources the bind schema from a LIMIT 0 query execution (the data path), which
 # matches what snowflake_query() returns.
 #
-# This test creates its own fixture, so SNOWFLAKE_DATABASE must point at a
-# database where the auth user can CREATE/DROP (not the read-only sample DB).
+# This test creates its own fixture, so it writes to SNOWFLAKE_TEST_WRITE_DATABASE
+# — a writable DB kept separate from SNOWFLAKE_DATABASE (the read-only sample
+# source) so a single CI run can cover both read and write tests.
 
 require snowflake
 
@@ -24,7 +25,7 @@ require-env SNOWFLAKE_PRIVATE_KEY_FILE
 
 require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
 
-require-env SNOWFLAKE_DATABASE
+require-env SNOWFLAKE_TEST_WRITE_DATABASE
 
 statement ok
 CREATE SECRET sf_ts_secret (
@@ -34,19 +35,19 @@ CREATE SECRET sf_ts_secret (
     AUTH_TYPE 'key_pair',
     PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
     PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
-    DATABASE '${SNOWFLAKE_DATABASE}',
+    DATABASE '${SNOWFLAKE_TEST_WRITE_DATABASE}',
     WAREHOUSE 'COMPUTE_WH'
 );
 
 # Fixture: dedicated schema + TIMESTAMP_NTZ(6) table with known values
 statement ok
-SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST', 'sf_ts_secret');
+SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST', 'sf_ts_secret');
 
 statement ok
-SELECT * FROM snowflake_query('CREATE OR REPLACE TABLE ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 (ID NUMBER, CREATED_AT TIMESTAMP_NTZ(6))', 'sf_ts_secret');
+SELECT * FROM snowflake_query('CREATE OR REPLACE TABLE ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 (ID NUMBER, CREATED_AT TIMESTAMP_NTZ(6))', 'sf_ts_secret');
 
 statement ok
-SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 (ID, CREATED_AT) VALUES (1, ''2026-02-09 05:07:34.488000''::TIMESTAMP_NTZ(6)), (2, ''2025-10-07 07:20:12.488000''::TIMESTAMP_NTZ(6))', 'sf_ts_secret');
+SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 (ID, CREATED_AT) VALUES (1, ''2026-02-09 05:07:34.488000''::TIMESTAMP_NTZ(6)), (2, ''2025-10-07 07:20:12.488000''::TIMESTAMP_NTZ(6))', 'sf_ts_secret');
 
 statement ok
 ATTACH '' AS sf_ts (TYPE snowflake, SECRET sf_ts_secret, READ_ONLY);
@@ -75,16 +76,16 @@ SELECT epoch_us(CREATED_AT) FROM sf_ts.DUCKDB_TS_TEST.TS_NTZ_6 WHERE ID = 1;
 query I
 SELECT
     (SELECT epoch_us(CREATED_AT) FROM sf_ts.DUCKDB_TS_TEST.TS_NTZ_6 WHERE ID = 1)
-  = (SELECT epoch_us(CREATED_AT) FROM snowflake_query('SELECT CREATED_AT FROM ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 WHERE ID = 1', 'sf_ts_secret'));
+  = (SELECT epoch_us(CREATED_AT) FROM snowflake_query('SELECT CREATED_AT FROM ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6 WHERE ID = 1', 'sf_ts_secret'));
 ----
 true
 
 # Cleanup
 statement ok
-SELECT * FROM snowflake_query('DROP TABLE IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6', 'sf_ts_secret');
+SELECT * FROM snowflake_query('DROP TABLE IF EXISTS ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST.TS_NTZ_6', 'sf_ts_secret');
 
 statement ok
-SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_TS_TEST', 'sf_ts_secret');
+SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCKDB_TS_TEST', 'sf_ts_secret');
 
 statement ok
 DROP SECRET IF EXISTS sf_ts_secret;
