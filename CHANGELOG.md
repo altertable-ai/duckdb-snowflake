@@ -17,6 +17,7 @@ Targets DuckDB **v1.5.4**.
 - Native `GEOMETRY`/`GEOGRAPHY` support: Snowflake geo columns are returned as GeoArrow (EWKB) by the ADBC driver and imported as DuckDB `GEOMETRY`, replacing the prior text passthrough ([#24](https://github.com/iqea-ai/duckdb-snowflake/pull/24), jatorre)
 - Connection pool: each scan leases a dedicated ADBC connection, so concurrent scans (e.g. dbt-duckdb models, self-joins) no longer share one non-thread-safe connection and crash ([#49](https://github.com/iqea-ai/duckdb-snowflake/pull/49), guillesd)
 - CI smoke test that executes the driver installers on Linux, macOS, and Windows ([#47](https://github.com/iqea-ai/duckdb-snowflake/pull/47))
+- CI runs the key-pair test suite: the Snowflake test job now provisions `SNOWFLAKE_PRIVATE_KEY_FILE`, so the ~15 `key_pair` test files execute instead of silently skipping ([#52](https://github.com/iqea-ai/duckdb-snowflake/pull/52))
 
 ### Changed
 - Update DuckDB submodule and CI pins to v1.5.4 ([#46](https://github.com/iqea-ai/duckdb-snowflake/pull/46))
