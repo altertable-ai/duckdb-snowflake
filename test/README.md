@@ -101,9 +101,9 @@ Tests combine Snowflake and local DuckDB data:
 ### Test Results
 ```
 Running test/sql/snowflake_basic_connectivity.test
-✓ Test 1: Extension Loading
-✓ Test 2: Create Secret
-✓ Test 3: Query Execution
+PASS Test 1: Extension Loading
+PASS Test 2: Create Secret
+PASS Test 3: Query Execution
 All tests passed: 3/3
 ```
 
