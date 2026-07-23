@@ -1,5 +1,6 @@
 #include "snowflake_debug.hpp"
 #include "snowflake_client.hpp"
+#include "snowflake_driver_manifest.hpp"
 #include "snowflake_types.hpp"
 #include "snowflake_query_builder.hpp"
 
@@ -143,7 +144,34 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		search_paths.push_back(env_path);
 	}
 
-	// 3. Try system paths
+	// 3. ADBC driver-manifest discovery (issue #50): snowflake.toml in the dirs
+	// from ADBC_DRIVER_PATH and the active conda prefix, then the Windows
+	// registry manifests interleaved with the per-OS manifest dirs in the
+	// spec's order (user registry, user/system dirs, machine registry). On
+	// Windows the registry is what `dbc install snowflake` actually writes —
+	// no .toml — so this is what makes it work with no env var.
+	for (const auto &manifest_dir : GetAdbcManifestEnvDirs()) {
+		auto manifest_driver = ResolveDriverFromManifestDir(manifest_dir);
+		if (!manifest_driver.empty()) {
+			search_paths.push_back(manifest_driver);
+		}
+	}
+	auto user_registry_driver = ResolveDriverFromRegistry(/*system_level=*/false);
+	if (!user_registry_driver.empty()) {
+		search_paths.push_back(user_registry_driver);
+	}
+	for (const auto &manifest_dir : GetAdbcManifestPlatformDirs()) {
+		auto manifest_driver = ResolveDriverFromManifestDir(manifest_dir);
+		if (!manifest_driver.empty()) {
+			search_paths.push_back(manifest_driver);
+		}
+	}
+	auto system_registry_driver = ResolveDriverFromRegistry(/*system_level=*/true);
+	if (!system_registry_driver.empty()) {
+		search_paths.push_back(system_registry_driver);
+	}
+
+	// 4. Try system paths
 #ifdef _WIN32
 	search_paths.push_back(std::string("C:\\Windows\\System32\\") + SNOWFLAKE_ADBC_LIB);
 	search_paths.push_back(std::string("C:\\Program Files\\Snowflake\\") + SNOWFLAKE_ADBC_LIB);
@@ -152,7 +180,7 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	search_paths.push_back(std::string("/usr/lib/") + SNOWFLAKE_ADBC_LIB);
 #endif
 
-	// 4. Try just the filename - let the system search for it
+	// 5. Try just the filename - let the system search for it
 	search_paths.emplace_back(SNOWFLAKE_ADBC_LIB);
 
 	// Find the first existing driver
@@ -173,6 +201,14 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		for (const auto &path : search_paths) {
 			error_msg += "  - " + path + "\n";
 		}
+		error_msg += "Also searched for driver manifests (snowflake.toml) in:\n";
+		for (const auto &manifest_dir : GetAdbcManifestDirs()) {
+			error_msg += "  - " + manifest_dir + "\n";
+		}
+#ifdef _WIN32
+		error_msg += "And registry manifests at HKCU and HKLM SOFTWARE\\ADBC\\Drivers\\snowflake.\n";
+#endif
+		error_msg += "Install the driver with scripts/install-adbc-driver.sh or `dbc install snowflake`.";
 
 		throw IOException(error_msg);
 	}
