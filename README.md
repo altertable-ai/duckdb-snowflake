@@ -7,13 +7,13 @@
 
 A DuckDB extension for querying Snowflake from DuckDB via the Apache Arrow ADBC Snowflake driver. Data flows between the two systems as Arrow record batches, so result sets stay columnar end-to-end.
 
-**This extension works with DuckDB v1.5.4.**
+**This extension works with DuckDB v1.5.5.**
 
 ## Quick Start
 
-### Get the Latest Extension Build (v1.5.4)
+### Get the Latest Extension Build (v1.5.5)
 
-Install DuckDB 1.5.4 (or newer) and then install the Snowflake extension directly from the community repository:
+Install DuckDB 1.5.5 (or newer) and then install the Snowflake extension directly from the community repository:
 
 ```sql
 INSTALL snowflake FROM community;
@@ -167,9 +167,9 @@ curl -L -O https://github.com/adbc-drivers/snowflake/releases/download/go/v1.11.
 # 2. Extract the driver library (libadbc_driver_snowflake.so on Linux, .dylib on macOS)
 tar xzf <ASSET>
 
-# 3. Move to DuckDB extensions directory under the fixed name (DuckDB v1.5.4)
-mkdir -p ~/.duckdb/extensions/v1.5.4/<PLATFORM>
-mv libadbc_driver_snowflake.* ~/.duckdb/extensions/v1.5.4/<PLATFORM>/libadbc_driver_snowflake.so
+# 3. Move to DuckDB extensions directory under the fixed name (DuckDB v1.5.5)
+mkdir -p ~/.duckdb/extensions/v1.5.5/<PLATFORM>
+mv libadbc_driver_snowflake.* ~/.duckdb/extensions/v1.5.5/<PLATFORM>/libadbc_driver_snowflake.so
 
 # 4. Clean up
 rm <ASSET>
@@ -184,9 +184,9 @@ curl -L -O https://github.com/adbc-drivers/snowflake/releases/download/go/v1.11.
 # Extract
 tar xzf snowflake_linux_amd64_v1.11.0.tar.gz
 
-# Install (DuckDB v1.5.4)
-mkdir -p ~/.duckdb/extensions/v1.5.4/linux_amd64
-mv libadbc_driver_snowflake.so ~/.duckdb/extensions/v1.5.4/linux_amd64/
+# Install (DuckDB v1.5.5)
+mkdir -p ~/.duckdb/extensions/v1.5.5/linux_amd64
+mv libadbc_driver_snowflake.so ~/.duckdb/extensions/v1.5.5/linux_amd64/
 
 # Clean up
 rm snowflake_linux_amd64_v1.11.0.tar.gz
@@ -199,9 +199,9 @@ curl -L -O https://github.com/adbc-drivers/snowflake/releases/download/go/v1.11.
 tar -xzf snowflake_windows_amd64_v1.11.0.tar.gz
 del snowflake_windows_amd64_v1.11.0.tar.gz
 
-# Place in DuckDB extensions directory under the fixed name (DuckDB v1.5.4)
-mkdir C:\Users\%USERNAME%\.duckdb\extensions\v1.5.4\windows_amd64
-move libadbc_driver_snowflake.dll C:\Users\%USERNAME%\.duckdb\extensions\v1.5.4\windows_amd64\libadbc_driver_snowflake.so
+# Place in DuckDB extensions directory under the fixed name (DuckDB v1.5.5)
+mkdir C:\Users\%USERNAME%\.duckdb\extensions\v1.5.5\windows_amd64
+move libadbc_driver_snowflake.dll C:\Users\%USERNAME%\.duckdb\extensions\v1.5.5\windows_amd64\libadbc_driver_snowflake.so
 ```
 
 ### Verification
@@ -410,7 +410,7 @@ COPY (
 
 The extension can optimize queries by pushing filters and column selections to Snowflake. **Pushdown is disabled by default** and must be explicitly enabled.
 
-> **Requires DuckDB 1.5.4 build of the Snowflake extension.** Earlier versions of the extension do not include the pushdown planner improvements referenced below.
+> **Requires DuckDB 1.5.5 build of the Snowflake extension.** Earlier versions of the extension do not include the pushdown planner improvements referenced below.
 
 ### Enabling Pushdown
 
