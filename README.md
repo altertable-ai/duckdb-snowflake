@@ -133,10 +133,9 @@ The installer will:
 
 ```bash
 dbc install snowflake
-export SNOWFLAKE_ADBC_DRIVER_PATH="<path dbc installed the driver to>"
 ```
 
-The extension resolves the driver by explicit path, not driver-manager manifest discovery, so point `SNOWFLAKE_ADBC_DRIVER_PATH` at the installed library.
+That is all: the extension discovers dbc-installed drivers through the standard ADBC driver manifests — `snowflake.toml` in the `ADBC_DRIVER_PATH` directories, the active conda prefix, and the per-OS manifest directories on Linux and macOS; the `SOFTWARE\ADBC\Drivers\snowflake` registry keys on Windows. No environment variable is needed. `SNOWFLAKE_ADBC_DRIVER_PATH` still works as an explicit override and takes precedence over manifest discovery.
 
 ### Manual Installation (advanced)
 

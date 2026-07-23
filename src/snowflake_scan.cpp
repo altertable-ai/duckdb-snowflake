@@ -65,6 +65,8 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 	auto upper = StringUtil::Upper(trimmed);
 	bool is_select = StringUtil::StartsWith(upper, "SELECT") || StringUtil::StartsWith(upper, "WITH") ||
 	                 StringUtil::StartsWith(upper, "(");
+	// Row-returning metadata statements. DESC also covers DESCRIBE.
+	bool is_metadata_rows = StringUtil::StartsWith(upper, "SHOW") || StringUtil::StartsWith(upper, "DESC");
 
 	if (is_select) {
 		// SELECT path: DuckDB's Arrow scanner prunes columns and reads the produced
@@ -73,6 +75,23 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		// So enable projection pushdown and let SnowflakeProduceArrowScan wrap the
 		// query as a projected subquery. Fetch the schema cheaply with LIMIT 0
 		// (data-path schema) rather than caching the full result.
+		bind_data->factory->projection_pushdown_enabled = true;
+		bind_data->factory->wrap_as_subquery = true;
+		bind_data->projection_pushdown_enabled = true;
+		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+	} else if (is_metadata_rows) {
+		// SHOW/DESC return rows but cannot be wrapped as a subquery, so the SELECT
+		// path's projection wrap can't apply to the raw statement — and the cached
+		// full-width stream misaligns DuckDB's positional reads on non-prefix
+		// projections (issue #48; prefix projections only worked by accident).
+		// Instead: execute the statement now, then re-target the scan at
+		// TABLE(RESULT_SCAN('<query id>')), which IS wrappable, and rejoin the
+		// SELECT path machinery. The factory's exclusive lease guarantees
+		// LAST_QUERY_ID() sees our statement.
+		auto query_id = SnowflakeExecuteAndGetQueryId(bind_data->factory.get());
+		auto result_scan_query = "SELECT * FROM TABLE(RESULT_SCAN('" + query_id + "'))";
+		bind_data->factory->query = result_scan_query;
+		bind_data->factory->modified_query = result_scan_query;
 		bind_data->factory->projection_pushdown_enabled = true;
 		bind_data->factory->wrap_as_subquery = true;
 		bind_data->projection_pushdown_enabled = true;

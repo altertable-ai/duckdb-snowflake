@@ -126,7 +126,17 @@ jobs:
           ./build/release/test/unittest "*snowflake_*"
           echo "Running test/sql/pushdown/*.test files..."
           ./build/release/test/unittest "[pushdown]"
-      
+
+      # Guard the dbc/manifest install path (issue #50). Every other job finds
+      # the driver sitting next to the binary, so this is the only coverage
+      # manifest discovery has; without it a regression ships silently. The
+      # script skips itself when secrets are absent, keeping forks green.
+      - name: Manifest-discovery smoke test
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: bash scripts/manifest_smoke_test.sh
+
       - name: Remove private key
         if: always()
         run: rm -f "$RUNNER_TEMP/sf_key.p8"
