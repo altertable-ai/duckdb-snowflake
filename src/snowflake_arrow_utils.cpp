@@ -362,6 +362,152 @@ void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowS
 	}
 }
 
+// Execute one statement on the factory's leased connection with a temporary
+// statement handle, optionally keeping the result stream. Shares the
+// auth-error invalidation behavior of the other execution paths.
+// When out_stream is requested, out_statement must be too: an ADBC statement
+// must outlive its active stream (the factory keeps its own statement alive for
+// the same reason), so the caller releases the stream first, then the statement.
+static void ExecuteOnLease(SnowflakeArrowStreamFactory *factory, const std::string &sql, ArrowArrayStream *out_stream,
+                           AdbcStatement *out_statement, const char *what) {
+	AdbcError error;
+	std::memset(&error, 0, sizeof(error));
+	AdbcStatement stmt;
+	std::memset(&stmt, 0, sizeof(stmt));
+	if (AdbcStatementNew(factory->lease->GetConnection(), &stmt, &error) != ADBC_STATUS_OK) {
+		throw IOException(std::string("Failed to create statement for ") + what);
+	}
+	if (AdbcStatementSetSqlQuery(&stmt, sql.c_str(), &error) != ADBC_STATUS_OK) {
+		std::string msg = std::string("Failed to set query for ") + what + ": ";
+		if (error.message) {
+			msg += error.message;
+			if (error.release) {
+				error.release(&error);
+			}
+		}
+		AdbcStatementRelease(&stmt, nullptr);
+		throw IOException(msg);
+	}
+	ArrowArrayStream stream;
+	std::memset(&stream, 0, sizeof(stream));
+	int64_t rows_affected = 0;
+	AdbcError exec_error;
+	std::memset(&exec_error, 0, sizeof(exec_error));
+	if (AdbcStatementExecuteQuery(&stmt, &stream, &rows_affected, &exec_error) != ADBC_STATUS_OK) {
+		std::string msg = std::string("Failed to execute ") + what + ": ";
+		if (exec_error.message) {
+			msg += exec_error.message;
+			if (exec_error.release) {
+				exec_error.release(&exec_error);
+			}
+		}
+		AdbcStatementRelease(&stmt, nullptr);
+		if (IsAuthenticationError(msg)) {
+			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
+			// Don't return this connection to the pool, and drop any idle ones —
+			// the auth token has likely expired for all sessions on this config.
+			factory->lease.Invalidate();
+			client_manager.DrainIdle(factory->lease->GetConfig());
+			throw IOException(msg + "\n\nThe authentication token may have expired. "
+			                        "Please retry your query - a fresh connection will be established automatically.");
+		}
+		throw IOException(msg);
+	}
+	if (out_stream) {
+		*out_stream = stream;
+		*out_statement = stmt;
+		return;
+	}
+	if (stream.release) {
+		// Rows are not needed; the statement has run server-side, which is all
+		// RESULT_SCAN requires.
+		stream.release(&stream);
+	}
+	AdbcStatementRelease(&stmt, nullptr);
+}
+
+// Read row 0 of column 0 from a single-batch utf8 stream (e.g. SELECT
+// LAST_QUERY_ID()). Handles both 32-bit ("u") and 64-bit ("U") offset layouts.
+static std::string ReadFirstRowUtf8(ArrowArrayStream &stream, const char *what) {
+	ArrowSchema schema;
+	std::memset(&schema, 0, sizeof(schema));
+	if (!stream.get_schema || stream.get_schema(&stream, &schema) != 0) {
+		throw IOException(std::string("Failed to read schema from ") + what);
+	}
+	std::string format;
+	if (schema.n_children == 1 && schema.children[0] && schema.children[0]->format) {
+		format = schema.children[0]->format;
+	}
+	if (schema.release) {
+		schema.release(&schema);
+	}
+	if (format != "u" && format != "U") {
+		throw IOException(std::string(what) + " returned unexpected Arrow type '" + format + "', expected utf8");
+	}
+
+	ArrowArray batch;
+	std::memset(&batch, 0, sizeof(batch));
+	if (!stream.get_next || stream.get_next(&stream, &batch) != 0 || !batch.release) {
+		throw IOException(std::string("Failed to read result batch from ") + what);
+	}
+	std::string value;
+	auto *col = batch.children && batch.n_children == 1 ? batch.children[0] : nullptr;
+	if (!col || col->length < 1 || col->n_buffers < 3) {
+		batch.release(&batch);
+		throw IOException(std::string(what) + " returned no rows");
+	}
+	auto row = col->offset;
+	auto data = reinterpret_cast<const char *>(col->buffers[2]);
+	if (format == "u") {
+		auto offsets = reinterpret_cast<const int32_t *>(col->buffers[1]);
+		value.assign(data + offsets[row], offsets[row + 1] - offsets[row]);
+	} else {
+		auto offsets = reinterpret_cast<const int64_t *>(col->buffers[1]);
+		value.assign(data + offsets[row], offsets[row + 1] - offsets[row]);
+	}
+	batch.release(&batch);
+	return value;
+}
+
+std::string SnowflakeExecuteAndGetQueryId(SnowflakeArrowStreamFactory *factory) {
+	// Run the statement itself; RESULT_SCAN only needs it executed server-side.
+	ExecuteOnLease(factory, factory->query, nullptr, nullptr, "metadata statement");
+
+	// Same session (exclusive lease), so LAST_QUERY_ID() is the statement above.
+	// The statement handle stays open until the stream is drained and released.
+	ArrowArrayStream id_stream;
+	std::memset(&id_stream, 0, sizeof(id_stream));
+	AdbcStatement id_stmt;
+	std::memset(&id_stmt, 0, sizeof(id_stmt));
+	ExecuteOnLease(factory, "SELECT LAST_QUERY_ID()", &id_stream, &id_stmt, "LAST_QUERY_ID()");
+	std::string query_id;
+	try {
+		query_id = ReadFirstRowUtf8(id_stream, "LAST_QUERY_ID()");
+	} catch (...) {
+		if (id_stream.release) {
+			id_stream.release(&id_stream);
+		}
+		AdbcStatementRelease(&id_stmt, nullptr);
+		throw;
+	}
+	if (id_stream.release) {
+		id_stream.release(&id_stream);
+	}
+	AdbcStatementRelease(&id_stmt, nullptr);
+
+	// The id feeds a quoted SQL literal; Snowflake ids are UUID-shaped, so anything
+	// else means we mis-read the result and must not splice it into a query.
+	for (auto c : query_id) {
+		if (!isalnum(static_cast<unsigned char>(c)) && c != '-') {
+			throw IOException("Unexpected query id from LAST_QUERY_ID(): " + query_id);
+		}
+	}
+	if (query_id.empty()) {
+		throw IOException("LAST_QUERY_ID() returned an empty id");
+	}
+	return query_id;
+}
+
 void SnowflakeArrowStreamFactory::UpdatePushdownParameters(const vector<string> &projection,
                                                            TableFilterSet *filter_set) {
 	DPRINT("UpdatePushdownParameters called: projection_size=%lu, "
