@@ -145,14 +145,30 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	}
 
 	// 3. ADBC driver-manifest discovery (issue #50): snowflake.toml in the dirs
-	// from ADBC_DRIVER_PATH, the active conda prefix, and the standardized
-	// per-OS manifest locations. This is what makes `dbc install snowflake`
-	// work with no env var.
-	for (const auto &manifest_dir : GetAdbcManifestDirs()) {
+	// from ADBC_DRIVER_PATH and the active conda prefix, then the Windows
+	// registry manifests interleaved with the per-OS manifest dirs in the
+	// spec's order (user registry, user/system dirs, machine registry). On
+	// Windows the registry is what `dbc install snowflake` actually writes —
+	// no .toml — so this is what makes it work with no env var.
+	for (const auto &manifest_dir : GetAdbcManifestEnvDirs()) {
 		auto manifest_driver = ResolveDriverFromManifestDir(manifest_dir);
 		if (!manifest_driver.empty()) {
 			search_paths.push_back(manifest_driver);
 		}
+	}
+	auto user_registry_driver = ResolveDriverFromRegistry(/*system_level=*/false);
+	if (!user_registry_driver.empty()) {
+		search_paths.push_back(user_registry_driver);
+	}
+	for (const auto &manifest_dir : GetAdbcManifestPlatformDirs()) {
+		auto manifest_driver = ResolveDriverFromManifestDir(manifest_dir);
+		if (!manifest_driver.empty()) {
+			search_paths.push_back(manifest_driver);
+		}
+	}
+	auto system_registry_driver = ResolveDriverFromRegistry(/*system_level=*/true);
+	if (!system_registry_driver.empty()) {
+		search_paths.push_back(system_registry_driver);
 	}
 
 	// 4. Try system paths
@@ -189,6 +205,9 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 		for (const auto &manifest_dir : GetAdbcManifestDirs()) {
 			error_msg += "  - " + manifest_dir + "\n";
 		}
+#ifdef _WIN32
+		error_msg += "And registry manifests at HKCU and HKLM SOFTWARE\\ADBC\\Drivers\\snowflake.\n";
+#endif
 		error_msg += "Install the driver with scripts/install-adbc-driver.sh or `dbc install snowflake`.";
 
 		throw IOException(error_msg);

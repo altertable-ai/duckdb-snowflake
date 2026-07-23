@@ -4,6 +4,16 @@
 #include <cstdlib>
 #include <fstream>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace duckdb {
 namespace snowflake {
 
@@ -56,7 +66,7 @@ static std::string ExtractTomlString(const std::string &raw) {
 	return value;
 }
 
-std::vector<std::string> GetAdbcManifestDirs() {
+std::vector<std::string> GetAdbcManifestEnvDirs() {
 	std::vector<std::string> dirs;
 
 	// 1. Explicit override: a list of manifest directories.
@@ -87,9 +97,13 @@ std::vector<std::string> GetAdbcManifestDirs() {
 			dirs.push_back(std::string(conda) + "/etc/adbc/drivers");
 		}
 	}
+	return dirs;
+}
 
-	// 3. Per-user config dir, then 4. system dir.
-	const char *home = std::getenv("HOME");
+std::vector<std::string> GetAdbcManifestPlatformDirs() {
+	std::vector<std::string> dirs;
+
+	// Per-user config dir, then system dir.
 #if defined(_WIN32)
 	if (const char *localappdata = std::getenv("LOCALAPPDATA")) {
 		if (*localappdata) {
@@ -97,11 +111,13 @@ std::vector<std::string> GetAdbcManifestDirs() {
 		}
 	}
 #elif defined(__APPLE__)
+	const char *home = std::getenv("HOME");
 	if (home && *home) {
 		dirs.push_back(std::string(home) + "/Library/Application Support/ADBC/Drivers");
 	}
 	dirs.emplace_back("/Library/Application Support/ADBC/Drivers");
 #else
+	const char *home = std::getenv("HOME");
 	const char *xdg = std::getenv("XDG_CONFIG_HOME");
 	if (xdg && *xdg) {
 		dirs.push_back(std::string(xdg) + "/adbc/drivers");
@@ -112,6 +128,44 @@ std::vector<std::string> GetAdbcManifestDirs() {
 #endif
 	return dirs;
 }
+
+std::vector<std::string> GetAdbcManifestDirs() {
+	auto dirs = GetAdbcManifestEnvDirs();
+	auto platform_dirs = GetAdbcManifestPlatformDirs();
+	dirs.insert(dirs.end(), platform_dirs.begin(), platform_dirs.end());
+	return dirs;
+}
+
+#if defined(_WIN32)
+std::string ResolveDriverFromRegistry(bool system_level) {
+	HKEY root = system_level ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+	HKEY key = nullptr;
+	if (RegOpenKeyExA(root, "SOFTWARE\\ADBC\\Drivers\\snowflake", 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+		return "";
+	}
+	// Two-call pattern: size first, then value. RRF_RT_REG_SZ rejects other
+	// value types and guarantees null termination.
+	DWORD size = 0;
+	std::string value;
+	if (RegGetValueA(key, nullptr, "driver", RRF_RT_REG_SZ, nullptr, nullptr, &size) == ERROR_SUCCESS && size > 0) {
+		std::vector<char> buf(size);
+		if (RegGetValueA(key, nullptr, "driver", RRF_RT_REG_SZ, nullptr, buf.data(), &size) == ERROR_SUCCESS) {
+			value.assign(buf.data()); // stops at the terminator
+		}
+	}
+	RegCloseKey(key);
+	if (!value.empty()) {
+		DPRINT("Registry manifest %s\\SOFTWARE\\ADBC\\Drivers\\snowflake resolves to: %s\n",
+		       system_level ? "HKLM" : "HKCU", value.c_str());
+	}
+	return value;
+}
+#else
+std::string ResolveDriverFromRegistry(bool system_level) {
+	(void)system_level;
+	return "";
+}
+#endif
 
 std::string ResolveDriverFromManifestDir(const std::string &dir) {
 	std::ifstream manifest(dir + "/snowflake.toml");
