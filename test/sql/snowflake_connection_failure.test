@@ -9,9 +9,16 @@
 # waiting primitives in the pool), so a refusal can't hang a query either.
 #
 # This test needs no Snowflake credentials: the account is intentionally
-# nonexistent, so the driver's login request fails fast (HTTP 404).
+# nonexistent, so the driver's login request fails fast (HTTP 404). It DOES
+# need the ADBC driver present, or the refusal becomes a driver-not-found
+# error and the expected messages below never appear. require-env on the
+# explicit driver path keeps it running in this repo's CI (which always sets
+# it) while skipping driverless environments like the community-extensions
+# registry build, whose test runner has no driver installed.
 
 require snowflake
+
+require-env SNOWFLAKE_ADBC_DRIVER_PATH
 
 statement ok
 CREATE SECRET bad_sf (
