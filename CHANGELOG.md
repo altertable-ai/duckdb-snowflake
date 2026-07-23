@@ -9,9 +9,9 @@ The version recorded here is the **extension version** (what `snowflake_version(
 returns and what the [community-extensions descriptor](https://github.com/duckdb/community-extensions/blob/main/extensions/snowflake/description.yml)
 pins). The DuckDB version each release targets is noted separately.
 
-## [0.5.0] - 2026-07-17
+## [0.5.0] - 2026-07-23
 
-Targets DuckDB **v1.5.4**.
+Targets DuckDB **v1.5.5**.
 
 ### Added
 - Native `GEOMETRY`/`GEOGRAPHY` support: Snowflake geo columns are returned as GeoArrow (EWKB) by the ADBC driver and imported as DuckDB `GEOMETRY`, replacing the prior text passthrough ([#24](https://github.com/iqea-ai/duckdb-snowflake/pull/24), jatorre)
@@ -20,12 +20,12 @@ Targets DuckDB **v1.5.4**.
 - CI runs the key-pair test suite: the Snowflake test job now provisions `SNOWFLAKE_PRIVATE_KEY_FILE`, so the ~15 `key_pair` test files execute instead of silently skipping ([#52](https://github.com/iqea-ai/duckdb-snowflake/pull/52))
 
 ### Changed
-- Update DuckDB submodule and CI pins to v1.5.4 ([#46](https://github.com/iqea-ai/duckdb-snowflake/pull/46))
+- Update DuckDB submodule and CI pins to v1.5.5, the community-extensions registry's current build target ([#57](https://github.com/iqea-ai/duckdb-snowflake/pull/57); supersedes the v1.5.4 bump in [#46](https://github.com/iqea-ai/duckdb-snowflake/pull/46))
 - Install the ADBC Snowflake driver from the ADBC Driver Foundry (`adbc-drivers/snowflake`, `go/v1.11.0`) instead of the deprecated `apache/arrow-adbc` wheels; the Foundry build ships GeoArrow support ([#47](https://github.com/iqea-ai/duckdb-snowflake/pull/47), reported by amoeba [#45](https://github.com/iqea-ai/duckdb-snowflake/issues/45))
 
 ### Fixed
 - Projected `SHOW`/`DESC` through `snowflake_query()` no longer crashes (ArrowTypeInfo type mismatch) or silently returns swapped columns: the scan re-targets at `TABLE(RESULT_SCAN('<query id>'))` so the projected-subquery machinery applies ([#48](https://github.com/iqea-ai/duckdb-snowflake/issues/48), in [#55](https://github.com/iqea-ai/duckdb-snowflake/pull/55))
-- The ADBC driver is discovered via standardized driver manifests (`snowflake.toml` in `ADBC_DRIVER_PATH`, the active conda prefix, per-user and system dirs), so `dbc install snowflake` works with no env var; the not-found error lists every location searched, and a CI smoke test guards the manifest path ([#50](https://github.com/iqea-ai/duckdb-snowflake/issues/50), in [#56](https://github.com/iqea-ai/duckdb-snowflake/pull/56))
+- The ADBC driver is discovered via standardized driver manifests (`snowflake.toml` in `ADBC_DRIVER_PATH`, the active conda prefix, per-user and system dirs, and on Windows the `SOFTWARE\ADBC\Drivers\snowflake` registry keys — the only mechanism dbc uses there), so `dbc install snowflake` works with no env var on every platform; the not-found error lists every location searched, and a CI smoke test guards the manifest path ([#50](https://github.com/iqea-ai/duckdb-snowflake/issues/50), in [#56](https://github.com/iqea-ai/duckdb-snowflake/pull/56))
 - `snowflake_query()` no longer reads the wrong column (SIGSEGV / silent wrong data) when DuckDB requests a non-prefix projection ([#32](https://github.com/iqea-ai/duckdb-snowflake/issues/32), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
 - `TIMESTAMP_NTZ` columns read through an attached catalog now use the correct unit instead of being misread as nanoseconds; the bind schema comes from the data path rather than `AdbcStatementExecuteSchema` ([#44](https://github.com/iqea-ai/duckdb-snowflake/issues/44), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
 - Quote projection-list and `WHERE` column references in pushdown SQL so lowercase identifiers don't fold to uppercase (follow-up to [#38](https://github.com/iqea-ai/duckdb-snowflake/issues/38), in [#42](https://github.com/iqea-ai/duckdb-snowflake/pull/42))
@@ -62,11 +62,11 @@ Targets DuckDB **v1.5.2**. First release distributed via the DuckDB community-ex
 
 ## [Earlier]
 
-Earlier releases predate this CHANGELOG and the version-to-release mapping below is reconstructed from git history. The version numbers used by the community-extensions descriptor for these merges are not recorded in this repository — TODO: recover from `duckdb/community-extensions` history if needed.
+Earlier releases predate this CHANGELOG. The version-to-release mapping below was recovered from `duckdb/community-extensions` descriptor history.
 
-- 2026-03-20 — Fix `snowflake_query` crash on column-pruning queries with DuckDB v1.5 ([#25](https://github.com/iqea-ai/duckdb-snowflake/pull/25))
-- 2026-03-13 — Update extension for DuckDB v1.5 compatibility ([#23](https://github.com/iqea-ai/duckdb-snowflake/pull/23))
+- **0.3.0** (registry 2026-03-14, DuckDB v1.5.0) — DuckDB v1.5 compatibility update ([#23](https://github.com/iqea-ai/duckdb-snowflake/pull/23), ref `a2a3aed`)
+- The `snowflake_query` column-pruning crash fix ([#25](https://github.com/iqea-ai/duckdb-snowflake/pull/25), merged 2026-03-20) first shipped with 0.4.0 — the registry descriptor was not bumped for it separately.
 
-[0.5.0]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.1...HEAD
+[0.5.0]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/iqea-ai/duckdb-snowflake/releases/tag/v0.4.0
