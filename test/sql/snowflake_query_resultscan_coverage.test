@@ -1,0 +1,78 @@
+# name: test/sql/snowflake_query_resultscan_coverage.test
+# description: Projected LIST/EXPLAIN/CALL through snowflake_query() route via RESULT_SCAN
+# group: [sql]
+
+#              Follow-up to issue #48: the RESULT_SCAN re-target originally covered only
+#              SHOW/DESC. LIST, EXPLAIN, and CALL also return rows that cannot be wrapped
+#              as a subquery; before this fix a non-prefix projection of their results
+#              misaligned DuckDB's positional Arrow reads (ArrowTypeInfo INTERNAL Error
+#              or silently wrong values).
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_KEYPAIR_USER
+
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_rescan_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Test 1: SELECT * over EXPLAIN (baseline - always worked)
+query I
+SELECT count(*) >= 1 FROM snowflake_query('EXPLAIN SELECT 1', 'sf_rescan_secret');
+----
+true
+
+# Test 2: non-prefix projection of EXPLAIN ("operation" and "id" are the 4th and
+# 2nd of ten columns). Before the fix: ArrowTypeInfo type mismatch (INTERNAL Error).
+query II
+SELECT count(*), count("id") FROM snowflake_query('EXPLAIN SELECT 1', 'sf_rescan_secret') WHERE "operation" = 'Result';
+----
+1	1
+
+# Fixtures for LIST and CALL (need a writable database)
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE SCHEMA ${SNOWFLAKE_DATABASE}.RESULTSCAN_COV', 'sf_rescan_secret');
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE STAGE ${SNOWFLAKE_DATABASE}.RESULTSCAN_COV.COV_STAGE', 'sf_rescan_secret');
+
+statement ok
+SELECT * FROM snowflake_query('COPY INTO @${SNOWFLAKE_DATABASE}.RESULTSCAN_COV.COV_STAGE/one.csv FROM (SELECT 1) FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_rescan_secret');
+
+# Test 3: non-prefix projection of LIST ("size" is the 2nd of four columns)
+query I
+SELECT count(*) FROM snowflake_query('LIST @${SNOWFLAKE_DATABASE}.RESULTSCAN_COV.COV_STAGE', 'sf_rescan_secret') WHERE "size" > 0;
+----
+1
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE PROCEDURE ${SNOWFLAKE_DATABASE}.RESULTSCAN_COV.TWO_COL_PROC() RETURNS TABLE(A NUMBER, B VARCHAR) LANGUAGE SQL AS $$ DECLARE rs RESULTSET DEFAULT (SELECT 1 AS A, ''one'' AS B UNION ALL SELECT 2, ''two''); BEGIN RETURN TABLE(rs); END $$', 'sf_rescan_secret');
+
+# Test 4: non-prefix projection of CALL (B is the 2nd column of the returned table)
+query T
+SELECT B FROM snowflake_query('CALL ${SNOWFLAKE_DATABASE}.RESULTSCAN_COV.TWO_COL_PROC()', 'sf_rescan_secret') ORDER BY B;
+----
+one
+two
+
+statement ok
+SELECT * FROM snowflake_query('DROP SCHEMA ${SNOWFLAKE_DATABASE}.RESULTSCAN_COV CASCADE', 'sf_rescan_secret');
