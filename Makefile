@@ -18,6 +18,18 @@ endif
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
+# Override extension-ci-tools' tidy-check: its file regex '$(PROJ_DIR)src/.*/'
+# requires a second path separator after src/, so the twelve translation units
+# directly in src/ were never linted - only src/storage/. This copy widens the
+# regex to the whole src/ tree. Make prints an "overriding recipe" warning for
+# this target on every run; that is expected and harmless. Drop the override if
+# the pattern is fixed upstream.
+tidy-check:
+	mkdir -p ./build/tidy
+	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) -DDISABLE_UNITY=1 -DCLANG_TIDY=1 -S $(DUCKDB_SRCDIR) -B build/tidy
+	cp duckdb/.clang-tidy build/tidy/.clang-tidy
+	cd build/tidy && python3 ../../duckdb/scripts/run-clang-tidy.py '$(PROJ_DIR)src/' -header-filter '$(PROJ_DIR)src/' -quiet ${TIDY_THREAD_PARAMETER} ${TIDY_BINARY_PARAMETER} ${TIDY_PERFORM_CHECKS}
+
 # Download pre-built ADBC driver if not present
 .PHONY: download-adbc
 download-adbc:

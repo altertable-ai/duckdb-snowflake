@@ -209,7 +209,7 @@ unique_ptr<ParsedExpression> SnowflakeQueryBuilder::BuildWhereExpression(TableFi
 			                        column_names.size());
 		}
 
-		string column_name = column_names[column_idx];
+		const string &column_name = column_names[column_idx];
 		auto condition = TransformFilter(*filter, column_name);
 		// Note: TransformFilter returns nullptr for filters that should be skipped
 		// (e.g., uninitialized DYNAMIC_FILTER) These filters will be applied by

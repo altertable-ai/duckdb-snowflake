@@ -141,7 +141,7 @@ void SnowflakeClient::InitializeDatabase(const SnowflakeConfig &config) {
 	// 2. Check environment variable (for custom locations)
 	const char *env_path = std::getenv("SNOWFLAKE_ADBC_DRIVER_PATH");
 	if (env_path) {
-		search_paths.push_back(env_path);
+		search_paths.emplace_back(env_path);
 	}
 
 	// 3. ADBC driver-manifest discovery (issue #50): snowflake.toml in the dirs

@@ -322,8 +322,9 @@ void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowS
 		std::string msg = "Failed to set query: ";
 		if (error.message) {
 			msg += error.message;
-			if (error.release)
+			if (error.release) {
 				error.release(&error);
+			}
 		}
 		throw IOException(msg);
 	}
@@ -336,8 +337,9 @@ void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowS
 		std::string msg = "Failed to execute snowflake_query: ";
 		if (exec_error.message) {
 			msg += exec_error.message;
-			if (exec_error.release)
+			if (exec_error.release) {
 				exec_error.release(&exec_error);
+			}
 		}
 		if (IsAuthenticationError(msg)) {
 			auto &client_manager = snowflake::SnowflakeClientManager::GetInstance();
