@@ -201,7 +201,11 @@ void SnowflakeSecret::Serialize(Serializer &serializer) const {
 }
 
 //! Custom deserialization for Snowflake secrets
-unique_ptr<BaseSecret> SnowflakeSecret::Deserialize(Deserializer &deserializer, BaseSecret base_secret) {
+// By-value parameter is dictated by DuckDB's secret_deserializer_t typedef; a
+// const reference would not match the registered function-pointer type.
+unique_ptr<BaseSecret>
+SnowflakeSecret::Deserialize(Deserializer &deserializer,
+                             BaseSecret base_secret) { // NOLINT(performance-unnecessary-value-param)
 	auto result = make_uniq<SnowflakeSecret>(base_secret.GetScope(), base_secret.GetProvider(), base_secret.GetName());
 
 	// Deserialize the secret map
