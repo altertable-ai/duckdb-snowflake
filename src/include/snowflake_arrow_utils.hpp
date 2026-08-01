@@ -117,7 +117,7 @@ void SnowflakeExecuteAndCacheStream(SnowflakeArrowStreamFactory *factory, ArrowS
 // Execute factory->query on the leased connection (discarding its rows) and return
 // Snowflake's query id for it, read via LAST_QUERY_ID() on the same session — the
 // lease guarantees no other statement runs in between. Used by snowflake_query bind
-// to re-target row-returning metadata statements (SHOW/DESC) at
+// to re-target row-returning metadata statements (SHOW/DESC/LIST/EXPLAIN/CALL) at
 // TABLE(RESULT_SCAN('<id>')), which unlike the raw statement can be wrapped as a
 // projected subquery (issue #48).
 std::string SnowflakeExecuteAndGetQueryId(SnowflakeArrowStreamFactory *factory);

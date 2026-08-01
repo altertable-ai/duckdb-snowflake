@@ -1,0 +1,64 @@
+# name: test/sql/snowflake_query_resultscan_write.test
+# description: Projected LIST/CALL through snowflake_query() route via RESULT_SCAN
+# group: [sql]
+
+#              Companion to snowflake_query_resultscan_coverage.test for the statements
+#              whose fixtures need write access: LIST (stage) and CALL (procedure).
+#              Writes to SNOWFLAKE_TEST_WRITE_DATABASE, the writable DB kept separate
+#              from SNOWFLAKE_DATABASE (the read-only sample source), same as the
+#              geometry and timestamp_ntz tests.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_USERNAME
+
+require-env SNOWFLAKE_PRIVATE_KEY_FILE
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
+
+require-env SNOWFLAKE_TEST_WRITE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_rescan_write_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_USERNAME}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
+    DATABASE '${SNOWFLAKE_TEST_WRITE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE SCHEMA ${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV', 'sf_rescan_write_secret');
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE STAGE ${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV.COV_STAGE', 'sf_rescan_write_secret');
+
+statement ok
+SELECT * FROM snowflake_query('COPY INTO @${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV.COV_STAGE/one.csv FROM (SELECT 1) FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_rescan_write_secret');
+
+# Test 1: non-prefix projection of LIST ("size" is the 2nd of four columns)
+query I
+SELECT count(*) FROM snowflake_query('LIST @${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV.COV_STAGE', 'sf_rescan_write_secret') WHERE "size" > 0;
+----
+1
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE PROCEDURE ${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV.TWO_COL_PROC() RETURNS TABLE(A NUMBER, B VARCHAR) LANGUAGE SQL AS $$ DECLARE rs RESULTSET DEFAULT (SELECT 1 AS A, ''one'' AS B UNION ALL SELECT 2, ''two''); BEGIN RETURN TABLE(rs); END $$', 'sf_rescan_write_secret');
+
+# Test 2: non-prefix projection of CALL (B is the 2nd column of the returned table)
+query T
+SELECT B FROM snowflake_query('CALL ${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV.TWO_COL_PROC()', 'sf_rescan_write_secret') ORDER BY B;
+----
+one
+two
+
+statement ok
+SELECT * FROM snowflake_query('DROP SCHEMA ${SNOWFLAKE_TEST_WRITE_DATABASE}.RESULTSCAN_COV CASCADE', 'sf_rescan_write_secret');

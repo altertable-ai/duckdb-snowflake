@@ -470,8 +470,19 @@ static std::string ReadFirstRowUtf8(ArrowArrayStream &stream, const char *what) 
 }
 
 std::string SnowflakeExecuteAndGetQueryId(SnowflakeArrowStreamFactory *factory) {
+	// LAST_QUERY_ID() below is only correct if both statements run on the same
+	// exclusively-leased session with nothing in between. Capture the connection
+	// identity so a refactor that swaps or re-acquires the lease mid-flight fails
+	// loudly here instead of splicing a foreign query id into RESULT_SCAN.
+	auto *leased_connection = factory->lease->GetConnection();
+
 	// Run the statement itself; RESULT_SCAN only needs it executed server-side.
 	ExecuteOnLease(factory, factory->query, nullptr, nullptr, "metadata statement");
+
+	if (factory->lease->GetConnection() != leased_connection) {
+		throw InternalException("snowflake_query metadata path: connection changed between the statement and "
+		                        "LAST_QUERY_ID(); the query id would belong to a different session");
+	}
 
 	// Same session (exclusive lease), so LAST_QUERY_ID() is the statement above.
 	// The statement handle stays open until the stream is drained and released.

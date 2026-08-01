@@ -65,8 +65,16 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 	auto upper = StringUtil::Upper(trimmed);
 	bool is_select = StringUtil::StartsWith(upper, "SELECT") || StringUtil::StartsWith(upper, "WITH") ||
 	                 StringUtil::StartsWith(upper, "(");
-	// Row-returning metadata statements. DESC also covers DESCRIBE.
-	bool is_metadata_rows = StringUtil::StartsWith(upper, "SHOW") || StringUtil::StartsWith(upper, "DESC");
+	// Row-returning metadata statements, matched on the first keyword (not a raw
+	// prefix, so an unrelated statement starting with the same letters can't
+	// false-match). Every one of these returns rows but cannot be wrapped as a
+	// subquery, and every one is re-readable through RESULT_SCAN, so they all
+	// need the re-target below — issue #48 applied to LIST/EXPLAIN/CALL exactly
+	// as it did to SHOW/DESC.
+	auto first_token = upper.substr(0, upper.find_first_of(" \t\n\r("));
+	bool is_metadata_rows = first_token == "SHOW" || first_token == "DESC" || first_token == "DESCRIBE" ||
+	                        first_token == "LIST" || first_token == "LS" || first_token == "EXPLAIN" ||
+	                        first_token == "CALL";
 
 	if (is_select) {
 		// SELECT path: DuckDB's Arrow scanner prunes columns and reads the produced
@@ -80,7 +88,7 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		bind_data->projection_pushdown_enabled = true;
 		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
 	} else if (is_metadata_rows) {
-		// SHOW/DESC return rows but cannot be wrapped as a subquery, so the SELECT
+		// These return rows but cannot be wrapped as a subquery, so the SELECT
 		// path's projection wrap can't apply to the raw statement — and the cached
 		// full-width stream misaligns DuckDB's positional reads on non-prefix
 		// projections (issue #48; prefix projections only worked by accident).

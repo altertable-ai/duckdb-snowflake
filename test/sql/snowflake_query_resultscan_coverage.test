@@ -1,0 +1,50 @@
+# name: test/sql/snowflake_query_resultscan_coverage.test
+# description: Projected EXPLAIN through snowflake_query() routes via RESULT_SCAN
+# group: [sql]
+
+#              Follow-up to issue #48: the RESULT_SCAN re-target originally covered only
+#              SHOW/DESC. EXPLAIN also returns rows that cannot be wrapped as a subquery;
+#              before this fix a non-prefix projection of its result misaligned DuckDB's
+#              positional Arrow reads (ArrowTypeInfo INTERNAL Error or silently wrong
+#              values). LIST and CALL need a writable database and are covered in
+#              snowflake_query_resultscan_write.test.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_KEYPAIR_USER
+
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_rescan_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Test 1: SELECT * over EXPLAIN (baseline - always worked)
+query I
+SELECT count(*) >= 1 FROM snowflake_query('EXPLAIN SELECT 1', 'sf_rescan_secret');
+----
+true
+
+# Test 2: non-prefix projection of EXPLAIN ("operation" and "id" are the 4th and
+# 2nd of ten columns). Before the fix: ArrowTypeInfo type mismatch (INTERNAL Error).
+query II
+SELECT count(*), count("id") FROM snowflake_query('EXPLAIN SELECT 1', 'sf_rescan_secret') WHERE "operation" = 'Result';
+----
+1	1
