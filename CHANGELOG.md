@@ -9,6 +9,14 @@ The version recorded here is the **extension version** (what `snowflake_version(
 returns and what the [community-extensions descriptor](https://github.com/duckdb/community-extensions/blob/main/extensions/snowflake/description.yml)
 pins). The DuckDB version each release targets is noted separately.
 
+## [0.5.1] - 2026-07-31
+
+Targets DuckDB **v1.5.5**.
+
+### Fixed
+- Projected `LIST`/`EXPLAIN`/`CALL` through `snowflake_query()` no longer crash (ArrowTypeInfo type mismatch) or silently return wrong columns: row-returning metadata statements are classified by first keyword and re-targeted at `TABLE(RESULT_SCAN('<query id>'))`, the same machinery that fixed `SHOW`/`DESC` in 0.5.0; the `LAST_QUERY_ID()` session-affinity invariant is now enforced with a connection-identity check ([#59](https://github.com/iqea-ai/duckdb-snowflake/issues/59), in [#61](https://github.com/iqea-ai/duckdb-snowflake/pull/61))
+- CI's clang-tidy check now lints the whole `src/` tree instead of only `src/storage/` (the upstream file regex requires a second path separator), and the lint backlog in the previously unchecked files is cleaned up ([#60](https://github.com/iqea-ai/duckdb-snowflake/issues/60), in [#62](https://github.com/iqea-ai/duckdb-snowflake/pull/62))
+
 ## [0.5.0] - 2026-07-23
 
 Targets DuckDB **v1.5.5**.
@@ -67,6 +75,7 @@ Earlier releases predate this CHANGELOG. The version-to-release mapping below wa
 - **0.3.0** (registry 2026-03-14, DuckDB v1.5.0) — DuckDB v1.5 compatibility update ([#23](https://github.com/iqea-ai/duckdb-snowflake/pull/23), ref `a2a3aed`)
 - The `snowflake_query` column-pruning crash fix ([#25](https://github.com/iqea-ai/duckdb-snowflake/pull/25), merged 2026-03-20) first shipped with 0.4.0 — the registry descriptor was not bumped for it separately.
 
+[0.5.1]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/iqea-ai/duckdb-snowflake/releases/tag/v0.4.0
