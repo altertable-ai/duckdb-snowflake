@@ -240,7 +240,8 @@ void SnowflakeGetArrowSchemaViaQuery(SnowflakeArrowStreamFactory *factory, Arrow
 	//     first data batch, so the tag is absent from the ExecuteSchema metadata.
 	//     A 1-row result lets the driver peek (a 0-row result cannot be peeked).
 	//   * Timestamps: ExecuteSchema mis-reports Snowflake TIMESTAMP units (issue #44).
-	std::string probe_query = "SELECT * FROM (" + factory->modified_query + ") AS __sf_schema_probe LIMIT 1";
+	// Newlines guard against a trailing line comment swallowing the closing paren.
+	std::string probe_query = "SELECT * FROM (\n" + factory->modified_query + "\n) AS __sf_schema_probe LIMIT 1";
 
 	AdbcError error;
 	std::memset(&error, 0, sizeof(error));
@@ -603,7 +604,9 @@ void SnowflakeArrowStreamFactory::UpdatePassthroughProjection(const vector<strin
 		}
 		cols += snowflake::QuoteSnowflakeIdentifier(projection[i]);
 	}
-	modified_query = "SELECT " + cols + " FROM (" + query + ") AS __sf_passthrough";
+	// The newlines matter: a trailing line comment in the user's query would
+	// otherwise swallow the closing paren and alias.
+	modified_query = "SELECT " + cols + " FROM (\n" + query + "\n) AS __sf_passthrough";
 	DPRINT("Passthrough projection applied:\n  Original: %s\n  Modified: %s\n", query.c_str(), modified_query.c_str());
 }
 
