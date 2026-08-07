@@ -210,7 +210,7 @@ Test that the driver is found:
 ```sql
 LOAD snowflake;
 SELECT snowflake_version();
--- Should return: "Snowflake Extension v0.5.1"
+-- Should return: "Snowflake Extension v0.5.2"
 ```
 
 ## Configuration
@@ -303,7 +303,7 @@ Returns the extension version information.
 
 ```sql
 SELECT snowflake_version();
--- Returns: "Snowflake Extension v0.5.1"
+-- Returns: "Snowflake Extension v0.5.2"
 ```
 
 ### Table Functions

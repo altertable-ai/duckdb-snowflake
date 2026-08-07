@@ -9,6 +9,15 @@ The version recorded here is the **extension version** (what `snowflake_version(
 returns and what the [community-extensions descriptor](https://github.com/duckdb/community-extensions/blob/main/extensions/snowflake/description.yml)
 pins). The DuckDB version each release targets is noted separately.
 
+## [0.5.2] - 2026-08-07
+
+Targets DuckDB **v1.5.5**.
+
+### Fixed
+- `snowflake_query()` no longer crashes on statements that begin with a SQL comment. The execution path was chosen from the first token of the user's SQL, so a leading comment (as prepended by dbt, BI tools, and query routers) made that token `/*` or `--`; even a plain `SELECT` then missed the projected-subquery path and DuckDB read projected columns positionally off a full-width stream (`ArrowTypeInfo` type mismatch). Comments are now skipped for classification only — the statement sent to Snowflake keeps them, so query tags still reach query history ([#64](https://github.com/iqea-ai/duckdb-snowflake/pull/64))
+- A trailing line comment no longer breaks the passthrough subquery wrap and schema probe: the user query is placed on its own line so the comment cannot swallow the closing parenthesis ([#64](https://github.com/iqea-ai/duckdb-snowflake/pull/64))
+- Projecting a single column out of a multi-column DDL/DML result no longer returns the wrong column. `SELECT output_bytes FROM snowflake_query('COPY INTO ...')` returned `rows_unloaded` — silently, since the columns share a type. The bind now disables projection pushdown on its own copy of the table function, so DuckDB scans the full result and applies the projection above the scan ([#64](https://github.com/iqea-ai/duckdb-snowflake/pull/64))
+
 ## [0.5.1] - 2026-07-31
 
 Targets DuckDB **v1.5.5**.
@@ -75,6 +84,7 @@ Earlier releases predate this CHANGELOG. The version-to-release mapping below wa
 - **0.3.0** (registry 2026-03-14, DuckDB v1.5.0) — DuckDB v1.5 compatibility update ([#23](https://github.com/iqea-ai/duckdb-snowflake/pull/23), ref `a2a3aed`)
 - The `snowflake_query` column-pruning crash fix ([#25](https://github.com/iqea-ai/duckdb-snowflake/pull/25), merged 2026-03-20) first shipped with 0.4.0 — the registry descriptor was not bumped for it separately.
 
+[0.5.2]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/iqea-ai/duckdb-snowflake/compare/v0.4.0...v0.4.1
