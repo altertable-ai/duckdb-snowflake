@@ -139,8 +139,26 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
 	} else {
 		// DDL/DML path: execute now and cache the stream. ExecuteSchema would leave
-		// the ADBC driver unable to create a second statement (SIGSEGV at produce),
-		// and a status result has no projection to honor.
+		// the ADBC driver unable to create a second statement (SIGSEGV at produce).
+		//
+		// The cached stream is full width and cannot be re-projected, so DuckDB must
+		// not prune columns for this scan. With pruning on, DuckDB maps projected
+		// output positions onto Arrow children positionally, so a non-prefix
+		// projection reads the wrong column — silently when the types happen to
+		// match, which is the common case for multi-column DML results (projecting
+		// `output_bytes` off a COPY INTO returned `rows_unloaded`).
+		//
+		// Clearing projection_pushdown on the bind's *copy* of the TableFunction
+		// disables pruning for this statement only: the binder copies the function
+		// into the plan after bind returns, so the registered function is untouched
+		// and other snowflake_query() calls still push projections down. DuckDB then
+		// scans all columns and applies the projection above the scan.
+		//
+		// projection_pushdown_enabled stays false so DuckDB clears column_ids and
+		// maps output position -> Arrow child positionally. That identity map is
+		// only correct because the line above guarantees the scan is full width;
+		// the two settings must be changed together.
+		input.table_function.projection_pushdown = false;
 		bind_data->factory->projection_pushdown_enabled = false;
 		bind_data->projection_pushdown_enabled = false;
 		SnowflakeExecuteAndCacheStream(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
