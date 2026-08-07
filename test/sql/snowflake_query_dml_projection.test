@@ -1,0 +1,80 @@
+# name: test/sql/snowflake_query_dml_projection.test
+# description: Projected multi-column DML results through snowflake_query() read the right column
+# group: [sql]
+
+#              Follow-up to #48/#59. DDL/DML statements take the cached-full-width-stream
+#              path, which cannot re-project. DuckDB used to prune columns for that scan
+#              anyway and then map output positions onto Arrow children positionally, so
+#              projecting a multi-column DML result read the WRONG column - silently,
+#              because the columns share a type: `SELECT output_bytes` off a COPY INTO
+#              returned rows_unloaded (3 instead of 93). The bind now clears
+#              projection_pushdown on its own copy of the TableFunction so DuckDB scans
+#              full width and projects above the scan.
+#
+#              Byte counts are deterministic: three 30-character rows plus newlines = 93.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_USERNAME
+
+require-env SNOWFLAKE_PRIVATE_KEY_FILE
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE
+
+require-env SNOWFLAKE_TEST_WRITE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_dml_proj_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_USERNAME}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_FILE}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE}',
+    DATABASE '${SNOWFLAKE_TEST_WRITE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE SCHEMA ${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ', 'sf_dml_proj_secret');
+
+statement ok
+SELECT * FROM snowflake_query('CREATE OR REPLACE STAGE ${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG', 'sf_dml_proj_secret');
+
+# Test 1: baseline - all three COPY INTO columns
+query III
+SELECT * FROM snowflake_query('COPY INTO @${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG/a.csv FROM (SELECT ''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'' UNION ALL SELECT ''bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'' UNION ALL SELECT ''cccccccccccccccccccccccccccccc'') FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_dml_proj_secret');
+----
+3	93	93
+
+# Test 2: project the LAST column only. Before the fix this returned 3 (rows_unloaded).
+query I
+SELECT output_bytes FROM snowflake_query('COPY INTO @${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG/b.csv FROM (SELECT ''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'' UNION ALL SELECT ''bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'' UNION ALL SELECT ''cccccccccccccccccccccccccccccc'') FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_dml_proj_secret');
+----
+93
+
+# Test 3: project a MIDDLE column only
+query I
+SELECT input_bytes FROM snowflake_query('COPY INTO @${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG/c.csv FROM (SELECT ''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'' UNION ALL SELECT ''bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'' UNION ALL SELECT ''cccccccccccccccccccccccccccccc'') FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_dml_proj_secret');
+----
+93
+
+# Test 4: reordered projection of two columns
+query II
+SELECT output_bytes, rows_unloaded FROM snowflake_query('COPY INTO @${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG/d.csv FROM (SELECT ''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'' UNION ALL SELECT ''bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'' UNION ALL SELECT ''cccccccccccccccccccccccccccccc'') FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE) OVERWRITE = TRUE SINGLE = TRUE', 'sf_dml_proj_secret');
+----
+93	3
+
+# Test 5: single-column DDL status still works (must not regress)
+query T
+SELECT status FROM snowflake_query('CREATE OR REPLACE STAGE ${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ.STG2', 'sf_dml_proj_secret');
+----
+Stage area STG2 successfully created.
+
+statement ok
+SELECT * FROM snowflake_query('DROP SCHEMA ${SNOWFLAKE_TEST_WRITE_DATABASE}.DML_PROJ CASCADE', 'sf_dml_proj_secret');

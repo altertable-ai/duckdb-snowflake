@@ -1,0 +1,90 @@
+# name: test/sql/snowflake_query_comment_classification.test
+# description: Commented statements still take the right snowflake_query() path
+# group: [sql]
+
+#              Follow-up to #48/#59. snowflake_query() picks its execution path from
+#              the first token of the user's SQL. A leading comment - which dbt, BI
+#              tools, and query routers routinely prepend - made the first token "/*"
+#              or "--", so even a plain SELECT missed the projected-subquery path and
+#              fell into the cached-full-width-stream path that ignores projection.
+#              DuckDB then read projected columns positionally off a full-width
+#              stream: ArrowTypeInfo type mismatch, or silently wrong values.
+#              A trailing line comment was a second hazard: the subquery wrap used to
+#              splice the query inline, so the comment swallowed the closing paren.
+
+require snowflake
+
+require-env SNOWFLAKE_ACCOUNT
+
+require-env SNOWFLAKE_KEYPAIR_USER
+
+require-env SNOWFLAKE_PRIVATE_KEY_PATH
+
+require-env SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+
+require-env SNOWFLAKE_DATABASE
+
+statement ok
+LOAD snowflake;
+
+statement ok
+CREATE SECRET sf_comment_secret (
+    TYPE snowflake,
+    ACCOUNT '${SNOWFLAKE_ACCOUNT}',
+    USER '${SNOWFLAKE_KEYPAIR_USER}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY_FILE '${SNOWFLAKE_PRIVATE_KEY_PATH}',
+    PRIVATE_KEY_PASSWORD '${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}',
+    DATABASE '${SNOWFLAKE_DATABASE}',
+    WAREHOUSE 'COMPUTE_WH'
+);
+
+# Test 1: baseline - uncommented SELECT, non-prefix projection
+query T
+SELECT N_NAME FROM snowflake_query('SELECT N_NATIONKEY, N_NAME, N_REGIONKEY FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION ORDER BY N_NATIONKEY LIMIT 2', 'sf_comment_secret');
+----
+ALGERIA
+ARGENTINA
+
+# Test 2: leading block comment (dbt query-tag shape). Before the fix: crash.
+query T
+SELECT N_NAME FROM snowflake_query('/* {"app":"dbt","node":"model.x"} */ SELECT N_NATIONKEY, N_NAME, N_REGIONKEY FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION ORDER BY N_NATIONKEY LIMIT 2', 'sf_comment_secret');
+----
+ALGERIA
+ARGENTINA
+
+# Test 3: leading line comment
+query T
+SELECT N_NAME FROM snowflake_query('-- routed by proxy
+SELECT N_NATIONKEY, N_NAME, N_REGIONKEY FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION ORDER BY N_NATIONKEY LIMIT 2', 'sf_comment_secret');
+----
+ALGERIA
+ARGENTINA
+
+# Test 4: several stacked comments of both kinds. Block comments do NOT nest in
+# Snowflake (the first */ closes them), so the stripper must not track depth.
+query T
+SELECT N_NAME FROM snowflake_query('/* one */ -- two
+/* three */ SELECT N_NATIONKEY, N_NAME FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION ORDER BY N_NATIONKEY LIMIT 2', 'sf_comment_secret');
+----
+ALGERIA
+ARGENTINA
+
+# Test 5: trailing line comment must not swallow the subquery wrap's closing paren
+query T
+SELECT N_NAME FROM snowflake_query('SELECT N_NATIONKEY, N_NAME FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION ORDER BY N_NATIONKEY LIMIT 2 -- trailing', 'sf_comment_secret');
+----
+ALGERIA
+ARGENTINA
+
+# Test 6: commented metadata statement still routes through RESULT_SCAN
+query I
+SELECT count(*) >= 1 FROM snowflake_query('/* c */ SHOW SCHEMAS IN DATABASE SNOWFLAKE_SAMPLE_DATA', 'sf_comment_secret');
+----
+true
+
+# Test 7: projected commented metadata statement returns the right column
+query I
+SELECT count(*) >= 1 FROM (SELECT "name" FROM snowflake_query('/* c */ SHOW SCHEMAS IN DATABASE SNOWFLAKE_SAMPLE_DATA', 'sf_comment_secret') WHERE "name" = 'INFORMATION_SCHEMA');
+----
+true

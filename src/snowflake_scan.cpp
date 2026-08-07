@@ -14,6 +14,39 @@
 namespace duckdb {
 namespace snowflake {
 
+// Return the query with leading whitespace and SQL comments removed, for
+// classification only — the statement we actually send keeps its comments, so
+// query tags from dbt and similar tools still reach Snowflake's query history.
+// Without this, a leading comment makes the first token "/*" or "--", the
+// statement misses its execution path, and a projected scan reads the wrong
+// columns (the #48/#59 failure mode, reachable from an ordinary SELECT).
+// Block comments do NOT nest in Snowflake: the first "*/" ends the comment
+// (verified — a nested-looking comment is a syntax error server-side), so the
+// scan here must terminate at the first "*/" to classify what Snowflake parses.
+static std::string StripLeadingCommentsForClassification(const std::string &sql) {
+	size_t i = 0;
+	while (i < sql.size()) {
+		if (std::isspace(static_cast<unsigned char>(sql[i]))) {
+			i++;
+		} else if (sql.compare(i, 2, "--") == 0) {
+			auto newline = sql.find('\n', i);
+			if (newline == std::string::npos) {
+				return ""; // comment runs to end of input: nothing to classify
+			}
+			i = newline + 1;
+		} else if (sql.compare(i, 2, "/*") == 0) {
+			auto close = sql.find("*/", i + 2);
+			if (close == std::string::npos) {
+				return ""; // unterminated comment: let Snowflake report the syntax error
+			}
+			i = close + 2;
+		} else {
+			break;
+		}
+	}
+	return sql.substr(i);
+}
+
 static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableFunctionBindInput &input,
                                                   vector<LogicalType> &return_types, vector<string> &names) {
 	DPRINT("SnowflakeScanBind invoked\n");
@@ -60,7 +93,7 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 	// Determine whether the passthrough query is a row-returning SELECT (projectable)
 	// or a DDL/DML statement (CREATE/INSERT/...), which returns a status result and
 	// is never column-pruned.
-	auto trimmed = query;
+	auto trimmed = StripLeadingCommentsForClassification(query);
 	StringUtil::LTrim(trimmed);
 	auto upper = StringUtil::Upper(trimmed);
 	bool is_select = StringUtil::StartsWith(upper, "SELECT") || StringUtil::StartsWith(upper, "WITH") ||
@@ -106,8 +139,26 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
 	} else {
 		// DDL/DML path: execute now and cache the stream. ExecuteSchema would leave
-		// the ADBC driver unable to create a second statement (SIGSEGV at produce),
-		// and a status result has no projection to honor.
+		// the ADBC driver unable to create a second statement (SIGSEGV at produce).
+		//
+		// The cached stream is full width and cannot be re-projected, so DuckDB must
+		// not prune columns for this scan. With pruning on, DuckDB maps projected
+		// output positions onto Arrow children positionally, so a non-prefix
+		// projection reads the wrong column — silently when the types happen to
+		// match, which is the common case for multi-column DML results (projecting
+		// `output_bytes` off a COPY INTO returned `rows_unloaded`).
+		//
+		// Clearing projection_pushdown on the bind's *copy* of the TableFunction
+		// disables pruning for this statement only: the binder copies the function
+		// into the plan after bind returns, so the registered function is untouched
+		// and other snowflake_query() calls still push projections down. DuckDB then
+		// scans all columns and applies the projection above the scan.
+		//
+		// projection_pushdown_enabled stays false so DuckDB clears column_ids and
+		// maps output position -> Arrow child positionally. That identity map is
+		// only correct because the line above guarantees the scan is full width;
+		// the two settings must be changed together.
+		input.table_function.projection_pushdown = false;
 		bind_data->factory->projection_pushdown_enabled = false;
 		bind_data->projection_pushdown_enabled = false;
 		SnowflakeExecuteAndCacheStream(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
