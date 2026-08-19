@@ -565,18 +565,69 @@ vector<string> SnowflakeClient::ListTables(ClientContext &context, const string 
 	return table_names;
 }
 
+static int32_t ParseOptionalInt(const string &value) {
+	if (value.empty()) {
+		return -1;
+	}
+	try {
+		return std::stoi(value);
+	} catch (const std::exception &) {
+		return -1;
+	}
+}
+
+static SnowflakeColumn MakeSnowflakeColumn(const string &column_name, const string &data_type,
+                                           const string &precision_str, const string &scale_str,
+                                           const string &nullable) {
+	return {column_name,
+	        SnowflakeTypeToLogicalType(data_type, ParseOptionalInt(precision_str), ParseOptionalInt(scale_str)),
+	        nullable == "YES"};
+}
+
+unordered_map<string, vector<SnowflakeColumn>> SnowflakeClient::ListColumns(ClientContext &context,
+                                                                            const string &schema) {
+	const string upper_schema = StringUtil::Upper(schema);
+	// CAST precision/scale to VARCHAR so ExecuteAndGetStrings (utf8-only) can
+	// read them; those INFORMATION_SCHEMA columns are NUMBER natively.
+	const string columns_query =
+	    "SELECT table_name, column_name, data_type, CAST(numeric_precision AS VARCHAR) AS numeric_precision, "
+	    "CAST(numeric_scale AS VARCHAR) AS numeric_scale, is_nullable FROM " +
+	    QuoteSnowflakeIdentifier(config.database) + ".information_schema.columns WHERE table_schema = '" +
+	    upper_schema + "' ORDER BY table_name, ordinal_position";
+
+	DPRINT("ListColumns query: %s\n", columns_query.c_str());
+	const vector<string> expected_names = {"TABLE_NAME",        "COLUMN_NAME",   "DATA_TYPE",
+	                                       "NUMERIC_PRECISION", "NUMERIC_SCALE", "IS_NULLABLE"};
+
+	auto result = ExecuteAndGetStrings(context, columns_query, expected_names);
+	unordered_map<string, vector<SnowflakeColumn>> columns_by_table;
+	if (result.empty() || result[0].empty()) {
+		return columns_by_table;
+	}
+
+	for (idx_t row_idx = 0; row_idx < result[0].size(); row_idx++) {
+		const string &table_name = result[0][row_idx];
+		columns_by_table[table_name].push_back(MakeSnowflakeColumn(
+		    result[1][row_idx], result[2][row_idx], result[3][row_idx], result[4][row_idx], result[5][row_idx]));
+	}
+	DPRINT("ListColumns returning columns for %zu tables in schema %s\n", columns_by_table.size(), schema.c_str());
+	return columns_by_table;
+}
+
 vector<SnowflakeColumn> SnowflakeClient::GetTableInfo(ClientContext &context, const string &schema,
                                                       const string &table_name) {
 	const string upper_schema = StringUtil::Upper(schema);
 	const string upper_table = StringUtil::Upper(table_name);
 
-	const string table_info_query = "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM " +
-	                                QuoteSnowflakeIdentifier(config.database) +
-	                                ".information_schema.columns WHERE table_schema = '" + upper_schema +
-	                                "' AND table_name = '" + upper_table + "' ORDER BY ORDINAL_POSITION";
+	const string table_info_query =
+	    "SELECT COLUMN_NAME, DATA_TYPE, CAST(NUMERIC_PRECISION AS VARCHAR) AS NUMERIC_PRECISION, "
+	    "CAST(NUMERIC_SCALE AS VARCHAR) AS NUMERIC_SCALE, IS_NULLABLE FROM " +
+	    QuoteSnowflakeIdentifier(config.database) + ".information_schema.columns WHERE table_schema = '" +
+	    upper_schema + "' AND table_name = '" + upper_table + "' ORDER BY ORDINAL_POSITION";
 
 	DPRINT("GetTableInfo query: %s\n", table_info_query.c_str());
-	const vector<string> expected_names = {"COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE"};
+	const vector<string> expected_names = {"COLUMN_NAME", "DATA_TYPE", "NUMERIC_PRECISION", "NUMERIC_SCALE",
+	                                       "IS_NULLABLE"};
 
 	auto result = ExecuteAndGetStrings(context, table_info_query, expected_names);
 
@@ -587,21 +638,10 @@ vector<SnowflakeColumn> SnowflakeClient::GetTableInfo(ClientContext &context, co
 	}
 
 	vector<SnowflakeColumn> col_data;
-
 	for (idx_t row_idx = 0; row_idx < result[0].size(); row_idx++) {
-		// Preserve original case from Snowflake (typically UPPERCASE)
-		// DuckDB handles case-insensitive column lookup internally
-		string column_name = result[0][row_idx];
-		string data_type = result[1][row_idx];
-		string nullable = result[2][row_idx];
-
-		bool is_nullable = (nullable == "YES");
-		LogicalType duckdb_type = SnowflakeTypeToLogicalType(data_type);
-
-		SnowflakeColumn new_col = {column_name, duckdb_type, is_nullable};
-		col_data.emplace_back(new_col);
+		col_data.push_back(MakeSnowflakeColumn(result[0][row_idx], result[1][row_idx], result[2][row_idx],
+		                                       result[3][row_idx], result[4][row_idx]));
 	}
-
 	return col_data;
 }
 

@@ -64,6 +64,12 @@ GEOMETRY
 statement ok
 ATTACH '' AS sf_geo (TYPE SNOWFLAKE, SECRET sf_geo_secret, READ_ONLY);
 
+# Schema is visible before any scan of the table
+query I
+SELECT column_type FROM (DESCRIBE sf_geo.DUCKDB_GEO_TEST.GEO_POINTS) WHERE column_name = 'LOCATION';
+----
+GEOMETRY
+
 # GEOGRAPHY column is exposed as native GEOMETRY
 query I
 SELECT typeof(LOCATION) FROM sf_geo.DUCKDB_GEO_TEST.GEO_POINTS WHERE ID = 1;

@@ -4,12 +4,69 @@
 
 namespace duckdb {
 namespace snowflake {
-LogicalType SnowflakeTypeToLogicalType(const std::string &snowflake_type_str) {
+
+static bool TryParseInt(const string &value, int &out) {
+	try {
+		out = std::stoi(value);
+		return true;
+	} catch (const std::exception &) {
+		return false;
+	}
+}
+
+static LogicalType DecimalFromParams(const string &snowflake_type_str, const string &params, bool number_kind) {
+	auto comma_pos = params.find(',');
+	int precision = 18;
+	int scale = 0;
+
+	if (comma_pos == string::npos) {
+		if (!TryParseInt(params, precision)) {
+			throw ConversionException("Invalid precision '%s' in type: %s", params, snowflake_type_str);
+		}
+	} else {
+		if (!TryParseInt(params.substr(0, comma_pos), precision)) {
+			throw ConversionException("Invalid precision '%s' in type: %s", params.substr(0, comma_pos),
+			                          snowflake_type_str);
+		}
+		if (!TryParseInt(params.substr(comma_pos + 1), scale)) {
+			throw ConversionException("Invalid scale '%s' in type: %s", params.substr(comma_pos + 1),
+			                          snowflake_type_str);
+		}
+	}
+
+	if (precision < 1 || precision > 38) {
+		throw ConversionException("%s precision %d out of range (1-38)", number_kind ? "NUMBER" : "DECIMAL", precision);
+	}
+	if (scale < 0 || scale > precision) {
+		throw ConversionException("%s scale %d invalid (must be 0-%d)", number_kind ? "NUMBER" : "DECIMAL", scale,
+		                          precision);
+	}
+
+	if (number_kind) {
+		return ConvertNumber(static_cast<uint8_t>(precision), static_cast<uint8_t>(scale));
+	}
+	return LogicalType::DECIMAL(static_cast<uint8_t>(precision), static_cast<uint8_t>(scale));
+}
+
+LogicalType SnowflakeTypeToLogicalType(const std::string &snowflake_type_str, int32_t numeric_precision,
+                                       int32_t numeric_scale) {
 	string normalized_type = StringUtil::Upper(snowflake_type_str);
 	normalized_type = StringUtil::Replace(normalized_type, " ", "");
 
 	auto paren_pos = normalized_type.find('(');
 	string base_type = normalized_type.substr(0, paren_pos);
+
+	// Prefer INFORMATION_SCHEMA NUMERIC_PRECISION/SCALE when the caller has them.
+	if (numeric_precision >= 1 && (base_type == "NUMBER" || base_type == "DECIMAL" || base_type == "NUMERIC")) {
+		int32_t scale = numeric_scale < 0 ? 0 : numeric_scale;
+		if (numeric_precision > 38 || scale > numeric_precision) {
+			throw ConversionException("%s precision/scale (%d,%d) out of range", base_type, numeric_precision, scale);
+		}
+		if (base_type == "NUMBER") {
+			return ConvertNumber(static_cast<uint8_t>(numeric_precision), static_cast<uint8_t>(scale));
+		}
+		return LogicalType::DECIMAL(static_cast<uint8_t>(numeric_precision), static_cast<uint8_t>(scale));
+	}
 
 	if (base_type.find("INT") != std::string::npos) {
 		if (base_type == "TINYINT") {
@@ -22,7 +79,8 @@ LogicalType SnowflakeTypeToLogicalType(const std::string &snowflake_type_str) {
 		return LogicalType::INTEGER;
 	}
 
-	if (base_type == "VARCHAR" || base_type == "STRING") {
+	if (base_type == "VARCHAR" || base_type == "STRING" || base_type == "TEXT" || base_type == "CHAR" ||
+	    base_type == "CHARACTER" || base_type == "NCHAR" || base_type == "NVARCHAR") {
 		return LogicalType::VARCHAR;
 	}
 
@@ -30,127 +88,66 @@ LogicalType SnowflakeTypeToLogicalType(const std::string &snowflake_type_str) {
 		return LogicalType::BOOLEAN;
 	}
 
-	// Floating point types
-	if (base_type == "FLOAT" || base_type == "FLOAT4" || base_type == "REAL") {
-		return LogicalType::FLOAT;
-	}
-
-	if (base_type == "DOUBLE" || base_type == "FLOAT8" || base_type == "DOUBLEPRECISION") {
+	// Snowflake FLOAT is IEEE-754 binary64; ADBC emits float64. Map all float
+	// aliases to DOUBLE so catalog types match the Arrow bind schema.
+	if (base_type == "FLOAT" || base_type == "FLOAT4" || base_type == "REAL" || base_type == "DOUBLE" ||
+	    base_type == "FLOAT8" || base_type == "DOUBLEPRECISION") {
 		return LogicalType::DOUBLE;
 	}
 
-	// DECIMAL/NUMERIC types
 	if (base_type == "DECIMAL" || base_type == "NUMERIC") {
 		if (paren_pos == std::string::npos) {
-			// Default precision and scale for DECIMAL without parameters
 			return LogicalType::DECIMAL(18, 0);
 		}
-
 		auto close_paren_pos = normalized_type.find(')');
 		if (close_paren_pos == std::string::npos) {
 			throw InvalidInputException("Expected closing ')' for DECIMAL type: " + snowflake_type_str);
 		}
-
-		auto params = normalized_type.substr(paren_pos + 1, close_paren_pos - paren_pos - 1);
-		auto comma_pos = params.find(',');
-
-		int precision = 18; // Default precision
-		int scale = 0;      // Default scale
-
-		if (comma_pos == std::string::npos) {
-			// Only precision specified
-			try {
-				precision = std::stoi(params);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid precision '%s' in type: %s", params, snowflake_type_str);
-			}
-		} else {
-			// Both precision and scale specified
-			std::string precision_str = params.substr(0, comma_pos);
-			std::string scale_str = params.substr(comma_pos + 1);
-
-			try {
-				precision = std::stoi(precision_str);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid precision '%s' in type: %s", precision_str, snowflake_type_str);
-			}
-
-			try {
-				scale = std::stoi(scale_str);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid scale '%s' in type: %s", scale_str, snowflake_type_str);
-			}
-		}
-
-		if (precision < 1 || precision > 38) {
-			throw ConversionException("DECIMAL precision %d out of range (1-38)", precision);
-		}
-		if (scale < 0 || scale > precision) {
-			throw ConversionException("DECIMAL scale %d invalid (must be 0-%d)", scale, precision);
-		}
-
-		return LogicalType::DECIMAL(static_cast<uint8_t>(precision), static_cast<uint8_t>(scale));
+		return DecimalFromParams(snowflake_type_str,
+		                         normalized_type.substr(paren_pos + 1, close_paren_pos - paren_pos - 1), false);
 	}
 
-	// NUMBER type (Snowflake's variable precision numeric)
 	if (base_type == "NUMBER") {
 		if (paren_pos == std::string::npos) {
-			// TODO create user setting to specify the behavior here. DOUBLE is
-			// relatively safe but loses precision for large decimals, and could
-			// possibly be losing out on performance.
-			return LogicalType::DOUBLE;
+			// Snowflake NUMBER without parameters is NUMBER(38,0). DECIMAL(38,0)
+			// matches the ADBC Arrow bind schema; DOUBLE does not.
+			return ConvertNumber(38, 0);
 		}
-
 		auto close_paren_pos = normalized_type.find(')');
 		if (close_paren_pos == std::string::npos) {
 			throw InvalidInputException("Expected closing ')' for NUMBER type: " + snowflake_type_str);
 		}
-
-		auto params = normalized_type.substr(paren_pos + 1, close_paren_pos - paren_pos - 1);
-
-		auto comma_pos = params.find(',');
-		int temp_precision = 0;
-		int temp_scale = 0;
-
-		if (comma_pos == std::string::npos) {
-			try {
-				temp_precision = std::stoi(params);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid precision '%s' in type: %s", params, snowflake_type_str);
-			}
-		} else {
-			std::string precision_str = params.substr(0, comma_pos);
-			std::string scale_str = params.substr(comma_pos + 1);
-
-			try {
-				temp_precision = std::stoi(precision_str);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid precision '%s' in type: %s", precision_str, snowflake_type_str);
-			}
-
-			try {
-				temp_scale = std::stoi(scale_str);
-			} catch (const std::exception &e) {
-				throw ConversionException("Invalid scale '%s' in type: %s", scale_str, snowflake_type_str);
-			}
-		}
-
-		if (temp_precision < 1 || temp_precision > 38) {
-			throw ConversionException("NUMBER precision %d out of range (1-38)", temp_precision);
-		}
-		if (temp_scale < 0 || temp_scale > temp_precision) {
-			throw ConversionException("NUMBER scale %d invalid (must be 0-%d)", temp_scale, temp_precision);
-		}
-
-		uint8_t precision = static_cast<uint8_t>(temp_precision);
-		uint8_t scale = static_cast<uint8_t>(temp_scale);
-
-		return ConvertNumber(precision, scale);
+		return DecimalFromParams(snowflake_type_str,
+		                         normalized_type.substr(paren_pos + 1, close_paren_pos - paren_pos - 1), true);
 	}
 
-	// TODO: Add more type mappings (TIMESTAMP_NTZ, TIMESTAMP_TZ, etc.)
+	if (base_type == "DATE") {
+		return LogicalType::DATE;
+	}
+	if (base_type == "TIME") {
+		return LogicalType::TIME;
+	}
+	if (base_type == "TIMESTAMP_LTZ" || base_type == "TIMESTAMP_TZ" || base_type == "TIMESTAMPTZ") {
+		return LogicalType::TIMESTAMP_TZ;
+	}
+	if (base_type == "TIMESTAMP" || base_type == "TIMESTAMP_NTZ" || base_type == "DATETIME") {
+		return LogicalType::TIMESTAMP;
+	}
 
-	return LogicalType::VARCHAR; // fallback type
+	if (base_type == "BINARY" || base_type == "VARBINARY" || base_type == "BYTE" || base_type == "BYTES") {
+		return LogicalType::BLOB;
+	}
+
+	if (base_type == "GEOGRAPHY" || base_type == "GEOMETRY") {
+		return LogicalType::GEOMETRY();
+	}
+
+	// VARIANT/OBJECT/ARRAY arrive as UTF-8 JSON from the ADBC driver.
+	if (base_type == "VARIANT" || base_type == "OBJECT" || base_type == "ARRAY") {
+		return LogicalType::VARCHAR;
+	}
+
+	return LogicalType::VARCHAR;
 }
 
 LogicalType ConvertNumber(uint8_t precision, uint8_t scale) {

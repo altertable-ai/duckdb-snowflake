@@ -45,7 +45,8 @@ struct SnowflakeTableBindData : public FunctionData {
 class SnowflakeTableEntry : public TableCatalogEntry {
 public:
 	SnowflakeTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info, SnowflakeConfig config)
-	    : TableCatalogEntry(catalog, schema, info), config(std::move(config)) {};
+	    : TableCatalogEntry(catalog, schema, info), config(std::move(config)),
+	      columns_loaded(columns.LogicalColumnCount() > 0) {};
 
 	string GetFullyQualifiedName() const {
 		return catalog.GetName() + "." + schema.name + "." + name;
@@ -68,8 +69,10 @@ private:
 	//! GetScanFunction calls on the same entry would otherwise race on the
 	//! unique_ptr reassignment (use-after-free) and on columns_loaded.
 	std::mutex bind_mutex;
+	//! True when `columns` was filled at LoadEntries (INFORMATION_SCHEMA) or on
+	//! the first GetScanFunction bind. After it flips, `columns` is not mutated.
 	bool columns_loaded = false;
-	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchema call.
+	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchemaViaQuery call.
 	//! Subsequent GetScanFunction binds deep-copy out of this instead of paying
 	//! another Snowflake roundtrip — see issue #33 (CREATE VIEW latency).
 	//! Guarded by bind_mutex above.

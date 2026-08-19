@@ -35,6 +35,8 @@ public:
 
 	vector<string> ListSchemas(ClientContext &context);
 	vector<string> ListTables(ClientContext &context, const string &schema);
+	//! All columns in `schema`, keyed by table name, in ordinal order.
+	unordered_map<string, vector<SnowflakeColumn>> ListColumns(ClientContext &context, const string &schema);
 	vector<SnowflakeColumn> GetTableInfo(ClientContext &context, const string &schema, const string &table_name);
 
 private:
