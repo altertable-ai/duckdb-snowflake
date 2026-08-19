@@ -52,6 +52,12 @@ SELECT * FROM snowflake_query('INSERT INTO ${SNOWFLAKE_TEST_WRITE_DATABASE}.DUCK
 statement ok
 ATTACH '' AS sf_ts (TYPE snowflake, SECRET sf_ts_secret, READ_ONLY);
 
+# Schema is visible before any scan of the table
+query I
+SELECT column_type FROM (DESCRIBE sf_ts.DUCKDB_TS_TEST.TS_NTZ_6) WHERE column_name = 'CREATED_AT';
+----
+TIMESTAMP
+
 # Attached catalog binds the column as plain TIMESTAMP (NTZ -> no tz), not TIMESTAMP WITH TIME ZONE
 query I
 SELECT typeof(CREATED_AT) FROM sf_ts.DUCKDB_TS_TEST.TS_NTZ_6 WHERE ID = 1;
