@@ -44,7 +44,7 @@ void SnowflakeTableSet::LoadEntries(ClientContext &context) {
 
 		if (auto table_columns = FindTableColumns(columns_by_table, table_name)) {
 			for (const auto &col : *table_columns) {
-				info.columns.AddColumn(ColumnDefinition(col.name, col.type));
+				info.columns.AddColumn(ColumnDefinition(Identifier(col.name), col.type));
 			}
 		}
 
