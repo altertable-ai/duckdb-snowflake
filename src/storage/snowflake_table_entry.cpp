@@ -4,6 +4,8 @@
 #include "snowflake_client_manager.hpp"
 #include "snowflake_scan.hpp"
 #include "snowflake_arrow_utils.hpp"
+#include "snowflake_settings.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "snowflake_query_builder.hpp"
 #include "duckdb/common/arrow/nanoarrow/nanoarrow.h"
 #include "duckdb/storage/table_storage_info.hpp"
@@ -27,11 +29,12 @@ static void CloneCachedSchema(ArrowSchema &src, ArrowSchema &dst) {
 
 TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
 	DPRINT("SnowflakeTableEntry::GetScanFunction called for table %s.%s.%s\n", GetConfig().database.c_str(),
-	       schema.name.c_str(), name.c_str());
+	       schema.name.GetIdentifierName().c_str(), name.GetIdentifierName().c_str());
 
 	auto &config = GetConfig();
 	string query = "SELECT * FROM " + QuoteSnowflakeIdentifier(config.database) + "." +
-	               QuoteSnowflakeIdentifier(schema.name) + "." + QuoteSnowflakeIdentifier(name);
+	               QuoteSnowflakeIdentifier(schema.name.GetIdentifierName()) + "." +
+	               QuoteSnowflakeIdentifier(name.GetIdentifierName());
 	DPRINT("SnowflakeTableEntry: Query = '%s'\n", query.c_str());
 
 	// Lease a dedicated connection from the pool for this scan; it is owned by the
@@ -40,8 +43,15 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 	auto &client_manager = SnowflakeClientManager::GetInstance();
 	auto lease = client_manager.Acquire(config);
 
-	auto factory = make_uniq<SnowflakeArrowStreamFactory>(std::move(lease), query);
+	auto factory = make_shared_ptr<SnowflakeArrowStreamFactory>(std::move(lease), query);
 	DPRINT("SnowflakeTableEntry: Created factory at %p\n", (void *)factory.get());
+
+	// Same snapshot as the snowflake_query() bind: an attached-catalog scan streams
+	// its result through the same factory and has the same unbounded read-ahead.
+	factory->driver_settings = GetDriverSettings(context);
+	if (factory->driver_settings.AnySet()) {
+		DUCKDB_LOG_DEBUG(context, "snowflake ATTACH scan: ADBC read-ahead %s", factory->driver_settings.ToLogString());
+	}
 
 	// Apply pushdown settings from catalog options
 	auto &snowflake_catalog = catalog.Cast<SnowflakeCatalog>();
@@ -52,7 +62,7 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 	       catalog_options.enable_pushdown ? "ENABLED" : "DISABLED",
 	       catalog_options.enable_pushdown ? "true" : "false");
 
-	auto snowflake_bind_data = make_uniq<SnowflakeScanBindData>(std::move(factory));
+	auto snowflake_bind_data = make_uniq<SnowflakeScanBindData>(factory);
 
 	// Set pushdown settings on bind_data (critical for avoiding crashes!)
 	snowflake_bind_data->projection_pushdown_enabled = catalog_options.enable_pushdown;
@@ -81,7 +91,7 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 			// driver's geoarrow.wkb tags (applied by peeking the first batch) and
 			// correct Snowflake TIMESTAMP units (issue #44) reach DuckDB.
 			// ExecuteSchema metadata carries neither.
-			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->factory.get(),
+			SnowflakeGetArrowSchemaViaQuery(snowflake_bind_data->snowflake_factory.get(),
 			                                snowflake_bind_data->schema_root.arrow_schema);
 			DPRINT("SnowflakeTableEntry: SnowflakeGetArrowSchemaViaQuery completed\n");
 
@@ -100,13 +110,13 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 
 		// Set column names on factory for filter building (maps column indices to
 		// names)
-		snowflake_bind_data->factory->column_names = names;
+		snowflake_bind_data->snowflake_factory->column_names = names;
 
 		// Populate columns if not already loaded (first time accessing this table)
 		if (!columns_loaded) {
 			for (idx_t i = 0; i < static_cast<idx_t>(names.size()); i++) {
 				DPRINT("  Column: %s, Type: %s\n", names[i].c_str(), return_types[i].ToString().c_str());
-				columns.AddColumn(ColumnDefinition(names[i], return_types[i]));
+				columns.AddColumn(ColumnDefinition(Identifier(names[i]), return_types[i]));
 			}
 			columns_loaded = true;
 		}
@@ -123,6 +133,10 @@ TableFunction SnowflakeTableEntry::GetScanFunction(ClientContext &context, uniqu
 
 unique_ptr<BaseStatistics> SnowflakeTableEntry::GetStatistics(ClientContext &context, column_t column_id) {
 	throw NotImplementedException("Snowflake does not support getting statistics for tables");
+}
+
+virtual_column_map_t SnowflakeTableEntry::GetVirtualColumns() const {
+	return virtual_column_map_t();
 }
 
 TableStorageInfo SnowflakeTableEntry::GetStorageInfo(ClientContext &context) {
