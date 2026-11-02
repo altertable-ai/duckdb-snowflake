@@ -1,7 +1,9 @@
 #pragma once
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "snowflake_config.hpp"
 #include "snowflake_client.hpp"
 
@@ -45,10 +47,17 @@ struct SnowflakeTableBindData : public FunctionData {
 class SnowflakeTableEntry : public TableCatalogEntry {
 public:
 	SnowflakeTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info, SnowflakeConfig config)
-	    : TableCatalogEntry(catalog, schema, info), config(std::move(config)) {};
+	    : TableCatalogEntry(catalog, schema, info), columns(std::move(info.columns)), config(std::move(config)),
+	      columns_loaded(columns.LogicalColumnCount() > 0) {};
 
 	string GetFullyQualifiedName() const {
-		return catalog.GetName() + "." + schema.name + "." + name;
+		return catalog.GetName().GetIdentifierName() + "." + schema.name.GetIdentifierName() + "." +
+		       name.GetIdentifierName();
+	}
+
+	//! Filled at LoadEntries when INFORMATION_SCHEMA returned the columns, else by the first GetScanFunction call
+	const ColumnList &GetColumns() const override {
+		return columns;
 	}
 
 	const SnowflakeConfig &GetConfig() const {
@@ -61,15 +70,26 @@ public:
 
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 
+	//! Snowflake tables have no rowid, and the Arrow scan cannot produce one.
+	//! The inherited default advertises a rowid virtual column, which DuckDB then
+	//! picks for queries that reference no columns (count(*), SELECT 1 FROM t):
+	//! with pushdown off the planner rejects it, with pushdown on it renders an
+	//! empty SELECT list (issue #73). Advertising none makes DuckDB fall back to
+	//! column 0, a real column the scan always produces.
+	virtual_column_map_t GetVirtualColumns() const override;
+
 private:
+	ColumnList columns;
 	SnowflakeConfig config;
 	//! Serializes access to the schema cache and the lazy columns load below.
 	//! DuckDB shares catalog table entries across connections; concurrent
 	//! GetScanFunction calls on the same entry would otherwise race on the
 	//! unique_ptr reassignment (use-after-free) and on columns_loaded.
 	std::mutex bind_mutex;
+	//! True when `columns` was filled at LoadEntries (INFORMATION_SCHEMA) or on
+	//! the first GetScanFunction bind. After it flips, `columns` is not mutated.
 	bool columns_loaded = false;
-	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchema call.
+	//! Cached Arrow schema bytes from the first SnowflakeGetArrowSchemaViaQuery call.
 	//! Subsequent GetScanFunction binds deep-copy out of this instead of paying
 	//! another Snowflake roundtrip — see issue #33 (CREATE VIEW latency).
 	//! Guarded by bind_mutex above.

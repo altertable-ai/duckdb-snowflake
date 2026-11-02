@@ -4,7 +4,7 @@
 name: Main Extension Distribution Pipeline
 on:
   push:
-    branches: [main, stable]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -23,22 +23,25 @@ jobs:
     name: Build extension binaries
     permissions:
       contents: read
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.5
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v1.5.5
-      ci_tools_version: v1.5.5
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
       extension_name: snowflake
       skip_tests: true  # Tests run in separate workflow with Snowflake credentials
+      # v2 ci-tools builds a reduced platform set on PRs by default; the package
+      # and Windows live-query jobs below need every platform
+      reduced_ci_mode: disabled
     secrets: inherit
 
   code-quality-check:
     name: Code Quality Check
     permissions:
       contents: read
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.5
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v1.5.5
-      ci_tools_version: v1.5.5
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
       extension_name: snowflake
       format_checks: 'format;tidy'
     secrets: inherit
@@ -79,7 +82,7 @@ jobs:
       - name: Download extension artifact
         uses: actions/download-artifact@v4
         with:
-          name: snowflake-v1.5.5-extension-${{ matrix.platform.name }}
+          name: snowflake-v2.0.0-extension-${{ matrix.platform.name }}
           path: ./extension-artifact
 
       - name: Download ADBC driver
@@ -141,7 +144,7 @@ jobs:
           
           # Create zip archive
           cd package
-          ZIP_FILE="../snowflake-extension-1.5.5-${{ matrix.platform.name }}.zip"
+          ZIP_FILE="../snowflake-extension-2.0.0-${{ matrix.platform.name }}.zip"
           if ! zip -r "$ZIP_FILE" snowflake/; then
             echo "ERROR: Failed to create zip archive"
             exit 1
@@ -150,14 +153,14 @@ jobs:
           
           # Display package info
           echo "Package contents:"
-          unzip -l snowflake-extension-1.5.5-${{ matrix.platform.name }}.zip
+          unzip -l snowflake-extension-2.0.0-${{ matrix.platform.name }}.zip
           echo ""
           echo "Package size:"
-          ls -lh snowflake-extension-1.5.5-${{ matrix.platform.name }}.zip
+          ls -lh snowflake-extension-2.0.0-${{ matrix.platform.name }}.zip
           
       - name: Validate package size
         run: |
-          PACKAGE_FILE="snowflake-extension-1.5.5-${{ matrix.platform.name }}.zip"
+          PACKAGE_FILE="snowflake-extension-2.0.0-${{ matrix.platform.name }}.zip"
           if [ ! -f "$PACKAGE_FILE" ]; then
             echo "ERROR: Package file not found: $PACKAGE_FILE"
             exit 1
@@ -179,8 +182,134 @@ jobs:
       - name: Upload complete package
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-extension-1.5.5-${{ matrix.platform.name }}
-          path: snowflake-extension-1.5.5-${{ matrix.platform.name }}.zip
+          name: snowflake-extension-2.0.0-${{ matrix.platform.name }}
+          path: snowflake-extension-2.0.0-${{ matrix.platform.name }}.zip
           retention-days: 30
           if-no-files-found: error
 
+  windows-live-query:
+    name: Windows live query (shipped package)
+    # Issue #70: no other job runs a query on Windows. This one drives the exact
+    # package a user downloads (extension + driver side by side) through the
+    # stock DuckDB CLI. Every check runs under a hard timeout via
+    # scripts/windows_live_query.ps1, so a CLI that never exits (issue #69)
+    # fails the step with a thread dump attached instead of running into the
+    # six hour job limit. Checks 2 and 3 need the Snowflake secrets and skip
+    # cleanly without them, so forks stay green; check 1 always runs.
+    needs: [build-complete-packages]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download complete package
+        uses: actions/download-artifact@v4
+        with:
+          name: snowflake-extension-2.0.0-windows_amd64
+          path: package
+
+      - name: Unpack package and DuckDB CLI
+        shell: pwsh
+        run: |
+          Expand-Archive package\snowflake-extension-2.0.0-windows_amd64.zip -DestinationPath package -Force
+          Get-ChildItem package\snowflake | Format-Table Name, Length
+          # v2.0 ships the CLI as duckdb-cli-<platform>.tar.gz (v1.5: duckdb_cli-<platform>.zip)
+          curl.exe -sfL -o duckdb_cli.tar.gz "https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-windows-amd64.tar.gz"
+          New-Item -ItemType Directory -Force -Path cli | Out-Null
+          tar -xzf duckdb_cli.tar.gz -C cli
+          .\cli\duckdb.exe --version
+
+      # Same contract as the macOS job in test-with-snowflake.yml: vars are
+      # exported only when usable. SNOWFLAKE_LIVE gates the credentialed checks.
+      - name: Set up Snowflake key-pair auth
+        shell: bash
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_KEYPAIR_USER: ${{ secrets.SNOWFLAKE_KEYPAIR_USER }}
+          SNOWFLAKE_USERNAME: ${{ secrets.SNOWFLAKE_USERNAME }}
+        run: |
+          if [ -z "$SNOWFLAKE_ACCOUNT" ] || [ -z "$SNOWFLAKE_DATABASE" ] || [ -z "$SNOWFLAKE_PRIVATE_KEY" ]; then
+            echo "Snowflake secrets not set; live checks will skip."
+            exit 0
+          fi
+          TMP_M="$(cygpath -m "$RUNNER_TEMP")"
+          KEY_PATH="$TMP_M/sf_key.p8"
+          if printf '%s' "$SNOWFLAKE_PRIVATE_KEY" | head -c 32 | grep -q "BEGIN"; then
+            printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$KEY_PATH"
+          else
+            printf '%s' "$SNOWFLAKE_PRIVATE_KEY" | openssl base64 -d -A > "$KEY_PATH"
+          fi
+          if grep -q "ENCRYPTED" "$KEY_PATH" && [ -z "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
+            echo "Key is encrypted but SNOWFLAKE_PRIVATE_KEY_PASSPHRASE is not set; live checks will skip."
+            rm -f "$KEY_PATH"
+            exit 0
+          fi
+          KP_USER="${SNOWFLAKE_KEYPAIR_USER:-$SNOWFLAKE_USERNAME}"
+          {
+            echo "SNOWFLAKE_LIVE=true"
+            echo "SNOWFLAKE_PRIVATE_KEY_FILE=$KEY_PATH"
+            echo "SNOWFLAKE_KEYPAIR_USER=$KP_USER"
+            echo "SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE=$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+          } >> "$GITHUB_ENV"
+          echo "Key-pair auth configured; live checks will run."
+
+      # The SQL files hold the account and key location, so they live in
+      # RUNNER_TEMP, are never printed, and are removed in the cleanup step.
+      - name: Write check SQL
+        shell: bash
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          WS_M="$(cygpath -m "$GITHUB_WORKSPACE")"
+          TMP_M="$(cygpath -m "$RUNNER_TEMP")"
+          EXT="$WS_M/package/snowflake/snowflake.duckdb_extension"
+          printf "LOAD '%s';\nSELECT snowflake_version();\n" "$EXT" > "$TMP_M/check1.sql"
+          if [ "${SNOWFLAKE_LIVE:-}" != "true" ]; then
+            exit 0
+          fi
+          SECRET="CREATE SECRET sf (TYPE snowflake, ACCOUNT '$SNOWFLAKE_ACCOUNT', USER '$SNOWFLAKE_KEYPAIR_USER', AUTH_TYPE 'key_pair', PRIVATE_KEY_FILE '$SNOWFLAKE_PRIVATE_KEY_FILE', PRIVATE_KEY_PASSWORD '$SNOWFLAKE_PRIVATE_KEY_PASSWORD_FILE', DATABASE '$SNOWFLAKE_DATABASE', WAREHOUSE 'COMPUTE_WH');"
+          printf "LOAD '%s';\n%s\nSELECT * FROM snowflake_query('SELECT 42 AS answer', 'sf');\n" "$EXT" "$SECRET" > "$TMP_M/check2.sql"
+          printf "LOAD '%s';\n%s\nATTACH '' AS sf_db (TYPE snowflake, SECRET sf, READ_ONLY);\nSELECT count(n_nationkey) FROM sf_db.tpch_sf1.nation;\n" "$EXT" "$SECRET" > "$TMP_M/check3.sql"
+
+      - name: Check 1, load and snowflake_version()
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\windows_live_query.ps1" -DuckDb "$env:GITHUB_WORKSPACE\cli\duckdb.exe" `
+            -SqlFile "$env:RUNNER_TEMP\check1.sql" -Label check1-version -Expect "Snowflake Extension v"
+
+      - name: Check 2, snowflake_query() then exit
+        if: env.SNOWFLAKE_LIVE == 'true'
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\windows_live_query.ps1" -DuckDb "$env:GITHUB_WORKSPACE\cli\duckdb.exe" `
+            -SqlFile "$env:RUNNER_TEMP\check2.sql" -Label check2-snowflake-query -Expect "42"
+
+      # always(): this is the control for check 2, so it must run even when
+      # check 2 fails. The job still fails on check 2.
+      - name: Check 3, ATTACH then exit
+        if: always() && env.SNOWFLAKE_LIVE == 'true'
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\windows_live_query.ps1" -DuckDb "$env:GITHUB_WORKSPACE\cli\duckdb.exe" `
+            -SqlFile "$env:RUNNER_TEMP\check3.sql" -Label check3-attach -Expect "25"
+
+      - name: Upload thread dumps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-live-query-thread-dumps
+          path: ${{ runner.temp }}/*-threads.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Remove private key and check SQL
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/sf_key.p8" "$RUNNER_TEMP"/check*.sql
