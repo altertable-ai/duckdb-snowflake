@@ -18,6 +18,8 @@
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "snowflake_secret_provider.hpp"
 #include "snowflake_query_builder.hpp"
+#include "snowflake_client_manager.hpp"
+#include "snowflake_settings.hpp"
 
 namespace duckdb {
 
@@ -27,7 +29,7 @@ void RegisterSnowflakeSecretType(DatabaseInstance &instance);
 
 inline void SnowflakeVersionScalarFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	auto val = Value("Snowflake Extension v0.5.2");
+	auto val = Value("Snowflake Extension v0.7.0");
 	result.SetValue(0, val);
 }
 
@@ -36,7 +38,7 @@ inline void SnowflakeVersionScalarFun(DataChunk &args, ExpressionState &state, V
 //! rendered SQL without needing a Snowflake table with lowercase columns.
 inline void SnowflakeRenderPushdownQueryFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
-	    args.data[0], args.data[1], args.data[2], result, args.size(),
+	    args.data[0], args.data[1], args.data[2], result,
 	    [&](string_t table, string_t projection_csv, string_t filter_eq_column) {
 		    auto rendered = snowflake::RenderPushdownQueryForTest(table.GetString(), projection_csv.GetString(),
 		                                                          filter_eq_column.GetString());
@@ -44,28 +46,87 @@ inline void SnowflakeRenderPushdownQueryFun(DataChunk &args, ExpressionState &st
 	    });
 }
 
+//! Builds the duckdb_functions() metadata for one of our functions (issue #67).
+//! The bare RegisterFunction(ScalarFunction/TableFunction) overloads have nowhere
+//! to put this, so each function is registered through its CreateXFunctionInfo
+//! instead. `examples` follow DuckDB's convention: a bare expression for a scalar,
+//! a full statement for a table function (a bare table-function call is a binder
+//! error).
+static FunctionDescription SnowflakeFunctionDescription(vector<string> parameter_names, string description,
+                                                        string example) {
+	FunctionDescription desc;
+	desc.parameter_names = std::move(parameter_names);
+	desc.description = std::move(description);
+	desc.examples = {std::move(example)};
+	desc.categories = {"snowflake"};
+	return desc;
+}
+
+//! Registers through the info form. ALTER_ON_CONFLICT is what the bare overloads
+//! set internally (extension_loader.cpp); the CreateInfo default is
+//! ERROR_ON_CONFLICT, so leaving it out would change behavior on re-load.
+template <class INFO, class FUNCTION>
+static void RegisterWithDescription(ExtensionLoader &loader, FUNCTION function, FunctionDescription desc) {
+	// duckdb_functions() reads parameter names from the signature first and
+	// falls back to the description only when the signature has none.
+	auto &signature = function.GetSignature();
+	for (idx_t i = 0; i < desc.parameter_names.size() && i < signature.GetParameterCount(); i++) {
+		signature.GetParameter(i).SetName(Identifier(desc.parameter_names[i]));
+	}
+	INFO info(std::move(function));
+	info.descriptions.push_back(std::move(desc));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	loader.RegisterFunction(std::move(info));
+}
+
 // Compatibility layer for different DuckDB versions
 static void LoadInternal(ExtensionLoader &loader) {
 	// Register the custom Snowflake secret type
 	RegisterSnowflakeSecretType(loader.GetDatabaseInstance());
 
+	// Drain pooled ADBC connections when this database closes, not at process
+	// exit (issue #69). Keyed per database: each DatabaseInstance has its own
+	// object cache, and re-loading into the same database just replaces it.
+	loader.GetDatabaseInstance().GetObjectCache().Put(snowflake::SnowflakePoolCloseGuard::ObjectType(),
+	                                                  make_shared_ptr<snowflake::SnowflakePoolCloseGuard>());
+
+	// Register SET-able session settings. Deliberately outside the ADBC_AVAILABLE
+	// block below: the settings describe driver behavior, but they must exist (and
+	// be inspectable via duckdb_settings()) on every build.
+	snowflake::RegisterSnowflakeSettings(DBConfig::GetConfig(loader.GetDatabaseInstance()));
+
 	// Register snowflake_version function using DuckDB 1.4 API
 	auto snowflake_version_function =
 	    ScalarFunction("snowflake_version", {}, LogicalType::VARCHAR, SnowflakeVersionScalarFun);
-	loader.RegisterFunction(std::move(snowflake_version_function));
+	RegisterWithDescription<CreateScalarFunctionInfo>(
+	    loader, std::move(snowflake_version_function),
+	    SnowflakeFunctionDescription({}, "Returns the version string of the Snowflake extension.",
+	                                 "snowflake_version()"));
 
 	// Test-only: render the SQL that pushdown would emit for a given table +
 	// projection + (optional) single equality filter. Used by query_builder.test.
 	auto snowflake_render_pushdown_query_function = ScalarFunction(
 	    "snowflake_render_pushdown_query", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	    LogicalType::VARCHAR, SnowflakeRenderPushdownQueryFun);
-	loader.RegisterFunction(std::move(snowflake_render_pushdown_query_function));
+	RegisterWithDescription<CreateScalarFunctionInfo>(
+	    loader, std::move(snowflake_render_pushdown_query_function),
+	    SnowflakeFunctionDescription(
+	        {"table_name", "projection_csv", "filter_eq_column"},
+	        "Test helper: returns the SQL the pushdown planner would send to Snowflake for a table, a "
+	        "comma-separated projection list and an optional single equality-filter column. Runs no query.",
+	        "snowflake_render_pushdown_query('DB.SCHEMA.ORDERS', 'C_CUSTKEY,C_MKTSEGMENT', '')"));
 
 #ifdef ADBC_AVAILABLE
 	// Register snowflake_scan table function (only available when ADBC is
 	// available)
 	auto snowflake_scan_function = GetSnowflakeScanFunction();
-	loader.RegisterFunction(std::move(snowflake_scan_function));
+	RegisterWithDescription<CreateTableFunctionInfo>(
+	    loader, std::move(snowflake_scan_function),
+	    SnowflakeFunctionDescription(
+	        {"query", "profile"},
+	        "Runs a SQL statement on Snowflake exactly as written and returns its result as a table. "
+	        "profile is the name of a Snowflake secret created with CREATE SECRET (TYPE snowflake).",
+	        "SELECT * FROM snowflake_query('SELECT 1', 'my_snowflake_secret');"));
 
 	// Register storage extension (only available when ADBC is available)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
@@ -109,14 +170,10 @@ DUCKDB_EXTENSION_API const char *snowflake_version() {
 	return duckdb::DuckDB::LibraryVersion();
 }
 
-// C++ extension entry point for loadable extensions
-#ifdef DUCKDB_BUILD_LOADABLE_EXTENSION
-extern "C" {
+// C++ extension entry point, used by both the loadable and the static build
 DUCKDB_CPP_EXTENSION_ENTRY(snowflake, loader) {
 	duckdb::LoadInternal(loader);
 }
-}
-#endif
 }
 
 #ifndef DUCKDB_EXTENSION_MAIN
