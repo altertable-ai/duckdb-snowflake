@@ -6,8 +6,10 @@
 # SnowflakeTableEntry used to leave TableCatalogEntry::columns empty until the
 # first GetScanFunction bind. DESCRIBE / duckdb_columns() / pragma_show then
 # returned no columns, so clients had to wait for a real SELECT to learn the
-# schema. LoadEntries now fills columns from INFORMATION_SCHEMA.COLUMNS (one
-# query per schema). Arrow bind schema stays lazy via ViaQuery (#44 / geometry).
+# schema. Columns now come from INFORMATION_SCHEMA.COLUMNS: one query for the
+# whole database when the catalog is scanned (duckdb_tables / duckdb_columns),
+# or one per schema on a direct lookup. Arrow bind schema stays lazy via
+# ViaQuery (#44 / geometry).
 #
 # Creates its own fixture in SNOWFLAKE_DATABASE so it does not depend on
 # sample-data schemas like TPCH_SF1.
@@ -91,6 +93,45 @@ query I
 SELECT typeof(CREATED_AT) FROM sf_cols.DUCKDB_CATALOG_TEST.COLS WHERE ID = 1;
 ----
 TIMESTAMP
+
+# A table lookup loads only its schema. A later duckdb_columns() preloads the
+# rest of the database and keeps the schema that was already loaded.
+statement ok
+SELECT * FROM snowflake_query('CREATE SCHEMA IF NOT EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_CATALOG_TEST_EMPTY', 'sf_cols_secret');
+
+statement ok
+ATTACH '' AS sf_cols_lazy (TYPE SNOWFLAKE, SECRET sf_cols_secret, READ_ONLY);
+
+query I
+SELECT COUNT(ID) FROM sf_cols_lazy.DUCKDB_CATALOG_TEST.COLS;
+----
+2
+
+query TT
+SELECT column_name, data_type FROM duckdb_columns()
+WHERE database_name = 'sf_cols_lazy' AND schema_name = 'DUCKDB_CATALOG_TEST' AND table_name = 'COLS'
+ORDER BY column_name;
+----
+AMOUNT	DECIMAL(12,2)
+CREATED_AT	TIMESTAMP
+ID	DECIMAL(38,0)
+NAME	VARCHAR
+
+query I
+SELECT COUNT(*) FROM duckdb_schemas() WHERE database_name = 'sf_cols_lazy' AND schema_name = 'DUCKDB_CATALOG_TEST_EMPTY';
+----
+1
+
+query I
+SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'sf_cols_lazy' AND schema_name = 'DUCKDB_CATALOG_TEST_EMPTY';
+----
+0
+
+statement ok
+DETACH sf_cols_lazy;
+
+statement ok
+SELECT * FROM snowflake_query('DROP SCHEMA IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_CATALOG_TEST_EMPTY', 'sf_cols_secret');
 
 statement ok
 SELECT * FROM snowflake_query('DROP TABLE IF EXISTS ${SNOWFLAKE_DATABASE}.DUCKDB_CATALOG_TEST.COLS', 'sf_cols_secret');

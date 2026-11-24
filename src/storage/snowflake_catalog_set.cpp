@@ -27,11 +27,15 @@ void SnowflakeCatalogSet::Scan(ClientContext &context, const std::function<void(
 }
 
 void SnowflakeCatalogSet::TryLoadEntries(ClientContext &context) {
+	LoadOnce([&]() { LoadEntries(context); });
+}
+
+void SnowflakeCatalogSet::LoadOnce(const std::function<void()> &load) {
 	lock_guard<mutex> lock(load_lock);
 	if (is_loaded) {
 		return;
 	}
-	LoadEntries(context);
+	load();
 	is_loaded = true;
 }
 } // namespace snowflake

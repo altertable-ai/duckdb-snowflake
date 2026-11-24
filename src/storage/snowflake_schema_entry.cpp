@@ -46,6 +46,11 @@ void SnowflakeSchemaEntry::Scan(ClientContext &context, CatalogType type,
 	tables->Scan(context, callback);
 }
 
+void SnowflakeSchemaEntry::PreloadTables(const vector<string> &table_names,
+                                         const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table) {
+	tables->Preload(table_names, columns_by_table);
+}
+
 bool SnowflakeSchemaEntry::CatalogTypeIsSupported(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:

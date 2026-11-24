@@ -26,6 +26,9 @@ protected:
 	//! Helper function to ensure loading happens only once
 	void TryLoadEntries(ClientContext &context);
 
+	//! Runs `load` to fill entries unless the set is already loaded, then marks it loaded
+	void LoadOnce(const std::function<void()> &load);
+
 protected:
 	Catalog &catalog;
 	unordered_map<string, unique_ptr<CatalogEntry>> entries;

@@ -26,6 +26,7 @@ void SnowflakeTableSet::LoadEntries(ClientContext &context) {
 	auto lease = SnowflakeClientManager::GetInstance().Acquire(config);
 	auto table_names = lease->ListTables(context, schema_name);
 
+	// Only reached when SnowflakeSchemaSet could not preload the whole database.
 	// One INFORMATION_SCHEMA.COLUMNS roundtrip for the whole schema. This fills
 	// TableCatalogEntry::columns before publication so DESCRIBE / duckdb_columns()
 	// work without a table scan. Arrow bind schema stays lazy (ViaQuery) so we
@@ -37,6 +38,16 @@ void SnowflakeTableSet::LoadEntries(ClientContext &context) {
 		DPRINT("SnowflakeTableSet::LoadEntries: ListColumns failed for %s: %s\n", schema_name.c_str(), ex.what());
 	}
 
+	AddEntries(table_names, columns_by_table);
+}
+
+void SnowflakeTableSet::Preload(const vector<string> &table_names,
+                                const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table) {
+	LoadOnce([&]() { AddEntries(table_names, columns_by_table); });
+}
+
+void SnowflakeTableSet::AddEntries(const vector<string> &table_names,
+                                   const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table) {
 	for (const auto &table_name : table_names) {
 		CreateTableInfo info(QualifiedName(schema.catalog.GetName(), Identifier(schema_name), Identifier(table_name)));
 		info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;

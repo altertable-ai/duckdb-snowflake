@@ -32,6 +32,8 @@ void SnowflakeCatalog::Initialize(bool load_builtin) {
 
 void SnowflakeCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
 	DPRINT("SnowflakeCatalog::ScanSchemas called\n");
+	// duckdb_tables() / duckdb_columns() scan every schema's tables right after this.
+	schemas.PreloadTables(context);
 	schemas.Scan(context, [&](CatalogEntry &schema) {
 		DPRINT("ScanSchemas callback for schema: %s\n", schema.name.c_str());
 		callback(schema.Cast<SchemaCatalogEntry>());
