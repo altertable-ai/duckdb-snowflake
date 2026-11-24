@@ -620,6 +620,49 @@ unordered_map<string, vector<SnowflakeColumn>> SnowflakeClient::ListColumns(Clie
 	return columns_by_table;
 }
 
+unordered_map<string, vector<string>> SnowflakeClient::ListAllTables(ClientContext &context) {
+	const string tables_query = "SELECT table_schema, table_name FROM " + QuoteSnowflakeIdentifier(config.database) +
+	                            ".information_schema.tables";
+	DPRINT("ListAllTables query: %s\n", tables_query.c_str());
+
+	auto result = ExecuteAndGetStrings(context, tables_query, {"TABLE_SCHEMA", "TABLE_NAME"});
+	unordered_map<string, vector<string>> tables_by_schema;
+	if (result.empty() || result[0].empty()) {
+		return tables_by_schema;
+	}
+
+	for (idx_t row_idx = 0; row_idx < result[0].size(); row_idx++) {
+		tables_by_schema[result[0][row_idx]].push_back(result[1][row_idx]);
+	}
+	DPRINT("ListAllTables returning tables for %zu schemas\n", tables_by_schema.size());
+	return tables_by_schema;
+}
+
+unordered_map<string, unordered_map<string, vector<SnowflakeColumn>>>
+SnowflakeClient::ListAllColumns(ClientContext &context) {
+	const string columns_query = "SELECT table_schema, table_name, column_name, data_type, "
+	                             "CAST(numeric_precision AS VARCHAR) AS numeric_precision, "
+	                             "CAST(numeric_scale AS VARCHAR) AS numeric_scale, is_nullable FROM " +
+	                             QuoteSnowflakeIdentifier(config.database) +
+	                             ".information_schema.columns ORDER BY table_schema, table_name, ordinal_position";
+	DPRINT("ListAllColumns query: %s\n", columns_query.c_str());
+	const vector<string> expected_names = {"TABLE_SCHEMA",      "TABLE_NAME",    "COLUMN_NAME", "DATA_TYPE",
+	                                       "NUMERIC_PRECISION", "NUMERIC_SCALE", "IS_NULLABLE"};
+
+	auto result = ExecuteAndGetStrings(context, columns_query, expected_names);
+	unordered_map<string, unordered_map<string, vector<SnowflakeColumn>>> columns_by_schema;
+	if (result.empty() || result[0].empty()) {
+		return columns_by_schema;
+	}
+
+	for (idx_t row_idx = 0; row_idx < result[0].size(); row_idx++) {
+		columns_by_schema[result[0][row_idx]][result[1][row_idx]].push_back(MakeSnowflakeColumn(
+		    result[2][row_idx], result[3][row_idx], result[4][row_idx], result[5][row_idx], result[6][row_idx]));
+	}
+	DPRINT("ListAllColumns returning columns for %zu schemas\n", columns_by_schema.size());
+	return columns_by_schema;
+}
+
 vector<SnowflakeColumn> SnowflakeClient::GetTableInfo(ClientContext &context, const string &schema,
                                                       const string &table_name) {
 	const string upper_schema = StringUtil::Upper(schema);

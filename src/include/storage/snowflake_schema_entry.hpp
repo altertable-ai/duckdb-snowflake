@@ -53,6 +53,9 @@ public:
 
 	bool CatalogTypeIsSupported(CatalogType type);
 
+	void PreloadTables(const vector<string> &table_names,
+	                   const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table);
+
 private:
 	SnowflakeConfig config;
 	unique_ptr<SnowflakeTableSet> tables;
