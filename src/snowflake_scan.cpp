@@ -9,7 +9,9 @@
 #include "snowflake_arrow_utils.hpp"
 #include "snowflake_config.hpp"
 #include "snowflake_secrets.hpp"
+#include "snowflake_settings.hpp"
 #include "snowflake_debug.hpp"
+#include "duckdb/logging/logger.hpp"
 
 namespace duckdb {
 namespace snowflake {
@@ -48,7 +50,7 @@ static std::string StripLeadingCommentsForClassification(const std::string &sql)
 }
 
 static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
 	DPRINT("SnowflakeScanBind invoked\n");
 	// Validate parameters
 	if (input.inputs.size() < 2) {
@@ -80,15 +82,24 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 
 	// Create the factory that will manage the ADBC connection and statement.
 	// The factory owns the leased connection for the whole scan operation.
-	auto factory = make_uniq<SnowflakeArrowStreamFactory>(std::move(lease), query);
+	auto factory = make_shared_ptr<SnowflakeArrowStreamFactory>(std::move(lease), query);
+
+	// Snapshot the driver read-ahead settings here, while we still have a
+	// ClientContext. The scan production path runs as a bare function pointer from
+	// DuckDB's arrow scanner and gets no context, so this is the last place they can
+	// be read (issue #66).
+	factory->driver_settings = GetDriverSettings(context);
+	if (factory->driver_settings.AnySet()) {
+		DUCKDB_LOG_DEBUG(context, "snowflake_query: ADBC read-ahead %s", factory->driver_settings.ToLogString());
+	}
 
 	// Create the bind data that inherits from ArrowScanFunctionData
 	// This allows us to use DuckDB's native Arrow scan implementation
-	auto bind_data = make_uniq<SnowflakeScanBindData>(std::move(factory));
+	auto bind_data = make_uniq<SnowflakeScanBindData>(factory);
 
 	// Filters stay client-side: the user controls the query, so we never rewrite
 	// its WHERE clause.
-	bind_data->factory->filter_pushdown_enabled = false;
+	bind_data->snowflake_factory->filter_pushdown_enabled = false;
 
 	// Determine whether the passthrough query is a row-returning SELECT (projectable)
 	// or a DDL/DML statement (CREATE/INSERT/...), which returns a status result and
@@ -116,10 +127,10 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		// So enable projection pushdown and let SnowflakeProduceArrowScan wrap the
 		// query as a projected subquery. Fetch the schema cheaply with LIMIT 0
 		// (data-path schema) rather than caching the full result.
-		bind_data->factory->projection_pushdown_enabled = true;
-		bind_data->factory->wrap_as_subquery = true;
+		bind_data->snowflake_factory->projection_pushdown_enabled = true;
+		bind_data->snowflake_factory->wrap_as_subquery = true;
 		bind_data->projection_pushdown_enabled = true;
-		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+		SnowflakeGetArrowSchemaViaQuery(bind_data->snowflake_factory.get(), bind_data->schema_root.arrow_schema);
 	} else if (is_metadata_rows) {
 		// These return rows but cannot be wrapped as a subquery, so the SELECT
 		// path's projection wrap can't apply to the raw statement — and the cached
@@ -129,14 +140,14 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		// TABLE(RESULT_SCAN('<query id>')), which IS wrappable, and rejoin the
 		// SELECT path machinery. The factory's exclusive lease guarantees
 		// LAST_QUERY_ID() sees our statement.
-		auto query_id = SnowflakeExecuteAndGetQueryId(bind_data->factory.get());
+		auto query_id = SnowflakeExecuteAndGetQueryId(bind_data->snowflake_factory.get());
 		auto result_scan_query = "SELECT * FROM TABLE(RESULT_SCAN('" + query_id + "'))";
-		bind_data->factory->query = result_scan_query;
-		bind_data->factory->modified_query = result_scan_query;
-		bind_data->factory->projection_pushdown_enabled = true;
-		bind_data->factory->wrap_as_subquery = true;
+		bind_data->snowflake_factory->query = result_scan_query;
+		bind_data->snowflake_factory->modified_query = result_scan_query;
+		bind_data->snowflake_factory->projection_pushdown_enabled = true;
+		bind_data->snowflake_factory->wrap_as_subquery = true;
 		bind_data->projection_pushdown_enabled = true;
-		SnowflakeGetArrowSchemaViaQuery(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+		SnowflakeGetArrowSchemaViaQuery(bind_data->snowflake_factory.get(), bind_data->schema_root.arrow_schema);
 	} else {
 		// DDL/DML path: execute now and cache the stream. ExecuteSchema would leave
 		// the ADBC driver unable to create a second statement (SIGSEGV at produce).
@@ -159,15 +170,15 @@ static unique_ptr<FunctionData> SnowflakeScanBind(ClientContext &context, TableF
 		// only correct because the line above guarantees the scan is full width;
 		// the two settings must be changed together.
 		input.table_function.projection_pushdown = false;
-		bind_data->factory->projection_pushdown_enabled = false;
+		bind_data->snowflake_factory->projection_pushdown_enabled = false;
 		bind_data->projection_pushdown_enabled = false;
-		SnowflakeExecuteAndCacheStream(bind_data->factory.get(), bind_data->schema_root.arrow_schema);
+		SnowflakeExecuteAndCacheStream(bind_data->snowflake_factory.get(), bind_data->schema_root.arrow_schema);
 	}
 
 	// Use DuckDB's Arrow integration to populate the table type information
 	// This converts Arrow schema to DuckDB types and handles all type mappings
 	ArrowTableFunction::PopulateArrowTableSchema(context, bind_data->arrow_table, bind_data->schema_root.arrow_schema);
-	names = bind_data->arrow_table.GetNames();
+	names = StringsToIdentifiers(bind_data->arrow_table.GetNames());
 	return_types = bind_data->arrow_table.GetTypes();
 	bind_data->all_types = return_types;
 

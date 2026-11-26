@@ -14,11 +14,18 @@ public:
 	    : SnowflakeCatalogSet(schema.catalog), schema(schema), config(std::move(config)), schema_name(schema_name) {
 	}
 
+	//! Fill this schema's tables from a database-wide listing, unless already loaded
+	void Preload(const vector<string> &table_names,
+	             const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table);
+
 protected:
 	//! Load tables for this schema
 	void LoadEntries(ClientContext &context) override;
 
 private:
+	void AddEntries(const vector<string> &table_names,
+	                const unordered_map<string, vector<SnowflakeColumn>> &columns_by_table);
+
 	SnowflakeSchemaEntry &schema;
 	SnowflakeConfig config;
 	const string schema_name;
